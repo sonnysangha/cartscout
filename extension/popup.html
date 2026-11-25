@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CartScout Coupons</title>
+  <link rel="stylesheet" href="popup.css">
+  <script type="module" src="popup.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand"><span aria-hidden="true">%</span> CartScout</div>
+    <h1 id="merchant">Coupon codes</h1>
+    <p id="status" role="status">Reading the current shop…</p>
+  </header>
+  <main>
+    <ol id="coupons" aria-label="Coupon codes"></ol>
+    <button id="retry" class="retry" hidden>Try again</button>
+  </main>
+  <footer>Try a code at checkout, then share whether it worked.</footer>
+  <template id="coupon">
+    <li>
+      <div class="coupon-top"><strong class="code"></strong><button class="copy">Copy code</button></div>
+      <p class="offer"></p>
+      <div class="coupon-meta"><span class="counts"></span><a class="source" target="_blank" rel="noreferrer">Source</a></div>
+      <div class="votes" aria-label="Did this code work?">
+        <button class="worked" aria-pressed="false">Worked</button>
+        <button class="failed" aria-pressed="false">Didn’t work</button>
+      </div>
+    </li>
+  </template>
+</body>
+</html>
