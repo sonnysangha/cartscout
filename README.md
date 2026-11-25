@@ -26,6 +26,17 @@ basket’s discount form in order. It leaves an accepted code applied and shows 
 and after subtotal when it can confirm a saving. An existing promo code or text already
 entered in the discount field blocks a new run. Reports stay manual.
 
+### Find the same product at other retailers
+
+Open a Myprotein UK basket and choose a country under **Shop in**. CartScout starts
+with an estimate from your device time zone or browser language, and falls back to
+the UK. You can change the country at any time.
+Click **Find alternatives** to compare up to four distinct basket products per lookup.
+The lookup sends only product names, variants, the merchant hostname and the selected
+country to CartScout, then uses a country-specific Oxylabs search and scrapes retailer
+pages for prices and stock. Exact matches, different variants and unconfirmed variants
+are labelled. Prices are shown in the retailer's local currency before delivery.
+
 ### Discovery and reports
 
 The backend sends the merchant hostname to Oxylabs `/v1/search`, then uses `/v1/scrape` to extract

@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { createDiscovery, normalizeCode, normalizeMerchant } from './oxylabs.js';
+import { createAlternativeDiscovery, parseBasket } from './alternatives.js';
 import { openStore, reporterKey } from './store.js';
 
 class HttpError extends Error {
@@ -30,8 +31,10 @@ async function readJson(request) {
   }
 }
 
-export function createCouponServer({ store, discover, now = Date.now, log = console.error }) {
+export function createCouponServer({ store, discover, findAlternatives, now = Date.now, log = console.error }) {
   const pending = new Map();
+  const pendingAlternativeItems = new Map();
+  const alternativeCache = new Map();
   let budgetWindow = 0;
   let discoveryCount = 0;
 
@@ -78,6 +81,45 @@ export function createCouponServer({ store, discover, now = Date.now, log = cons
     }
   }
 
+  async function alternatives(merchant, country, items) {
+    if (!findAlternatives) throw new HttpError(503, 'Retailer search is unavailable.');
+    const lookups = items.map(async (item) => {
+      const key = JSON.stringify([merchant, country, item.name.toLowerCase(), item.variant.toLowerCase()]);
+      const cached = alternativeCache.get(key);
+      if (cached?.expiresAt > now()) return cached.value;
+      if (pendingAlternativeItems.has(key)) return pendingAlternativeItems.get(key);
+      if (pendingAlternativeItems.size >= 8) throw new HttpError(429, 'Retailer search is busy. Try again shortly.');
+
+      const lookup = (async () => {
+        const value = await findAlternatives(merchant, country, item);
+        if (!value.partial) {
+          if (alternativeCache.size >= 256) alternativeCache.delete(alternativeCache.keys().next().value);
+          alternativeCache.set(key, { value, expiresAt: now() + 15 * 60_000 });
+        }
+        return value;
+      })();
+      pendingAlternativeItems.set(key, lookup);
+      try {
+        return await lookup;
+      } finally {
+        pendingAlternativeItems.delete(key);
+      }
+    });
+    const settled = await Promise.allSettled(lookups);
+    if (settled.every((result) => result.status === 'rejected')) {
+      const reason = settled[0].reason;
+      if (reason instanceof HttpError) throw reason;
+      log('Retailer lookup failed:', reason?.message);
+      throw new HttpError(502, 'Retailer lookup is temporarily unavailable.');
+    }
+    return { country, results: items.map((item, index) => {
+      const result = settled[index];
+      return result.status === 'fulfilled'
+        ? { ...item, ...result.value }
+        : { ...item, offers: [], error: 'This item could not be checked.' };
+    }) };
+  }
+
   return createServer(async (request, response) => {
     function send(status, body) {
       response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -86,7 +128,7 @@ export function createCouponServer({ store, discover, now = Date.now, log = cons
 
     try {
       if (request.url === '/health' && request.method === 'GET') return send(200, { ok: true });
-      if (request.method !== 'POST' || !['/v1/coupons', '/v1/reports'].includes(request.url)) {
+      if (request.method !== 'POST' || !['/v1/coupons', '/v1/reports', '/v1/alternatives'].includes(request.url)) {
         throw new HttpError(404, 'Route not found.');
       }
       const body = await readJson(request);
@@ -94,6 +136,11 @@ export function createCouponServer({ store, discover, now = Date.now, log = cons
       if (!merchant) throw new HttpError(400, 'Enter a public merchant hostname.');
       const token = request.headers.authorization?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
       if (!token) throw new HttpError(401, 'Missing installation token.');
+      if (request.url === '/v1/alternatives') {
+        const basket = parseBasket(body);
+        if (!basket) throw new HttpError(400, 'Choose a supported country and provide basket products.');
+        return send(200, await alternatives(merchant, basket.country, basket.items));
+      }
       const reporter = reporterKey(token);
       if (request.url === '/v1/coupons') return send(200, await lookup(merchant, reporter));
       const code = normalizeCode(body.code);
@@ -117,7 +164,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const location = process.env.OXYLABS_LOCATION?.trim().toUpperCase();
   if (location && !/^[A-Z]{2}$/.test(location)) throw new Error('Use a two-letter OXYLABS_LOCATION.');
   const store = openStore(process.env.DATABASE_PATH || 'data/cartscout.sqlite');
-  const server = createCouponServer({ store, discover: createDiscovery({ key, location }) });
+  const server = createCouponServer({
+    store, discover: createDiscovery({ key, location }), findAlternatives: createAlternativeDiscovery({ key }),
+  });
   const host = process.env.HOST || '127.0.0.1';
   const port = Number(process.env.PORT || 8787);
   server.listen(port, host, () => console.log(`CartScout API listening on ${host}:${server.address().port}`));

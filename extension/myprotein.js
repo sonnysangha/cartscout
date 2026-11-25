@@ -107,3 +107,23 @@ export async function runMyproteinCoupons(codes) {
     return complete({ state: 'unknown', code: lastCode });
   }
 }
+
+export function readMyproteinBasket() {
+  if (location.protocol !== 'https:' || !['www.myprotein.com', 'myprotein.com'].includes(location.hostname)
+    || !/^\/basket\/?$/.test(location.pathname)) return [];
+
+  const items = new Map();
+  for (const row of document.querySelectorAll('main basket-item')) {
+    const link = [...row.querySelectorAll('a[href^="/p/"]')].find((anchor) => anchor.textContent.trim());
+    if (!link || !row.querySelector('[data-e2e="basket-remove_item_button"]')) continue;
+    const name = link.textContent.trim();
+    const specs = link?.parentElement.nextElementSibling;
+    const variant = specs?.tagName === 'UL'
+      ? [...specs.querySelectorAll('li')].map((spec) => spec.textContent.trim().replace(/\s*-\s*\d+\s*servings?$/i, ''))
+        .filter(Boolean).join(', ').slice(0, 100)
+      : '';
+    const branded = (/^myprotein\b/i.test(name) ? name : `Myprotein ${name}`).slice(0, 140);
+    items.set(JSON.stringify([branded, variant]), { name: branded, variant });
+  }
+  return [...items.values()];
+}

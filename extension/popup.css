@@ -25,3 +25,12 @@ footer { padding: 10px 14px 14px; }
 #checkout { padding: 0 0 12px; }
 #try-codes { width: 100%; padding: 10px; }
 #checkout-status:not(:empty) { margin: 8px 2px 0; color: #294938; }
+#alternatives { padding: 0 0 12px; }
+.market-row { display: flex; align-items: center; gap: 6px; }
+.market-row label { white-space: nowrap; font-size: 12px; }
+.market-row select { flex: 1; min-width: 0; font: inherit; font-size: 12px; padding: 6px 4px; border: 1px solid #c9d6c7; border-radius: 7px; }
+#alternatives-status:not(:empty) { margin-top: 8px; color: #294938; }
+#alternative-results h2 { margin: 10px 0 6px; font-size: 13px; }
+#alternative-results ul { display: grid; gap: 5px; padding: 0; margin: 0; list-style: none; }
+#alternative-results li { padding: 8px; }
+#alternative-results li p { color: #4d6255; font-size: 12px; }

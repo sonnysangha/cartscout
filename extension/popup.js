@@ -1,5 +1,6 @@
 import { API_ORIGIN } from './config.js';
-import { runMyproteinCoupons } from './myprotein.js';
+import { readMyproteinBasket, runMyproteinCoupons } from './myprotein.js';
+import { basketLimit, markets, suggestMarket } from './markets.js';
 
 const status = document.querySelector('#status');
 const list = document.querySelector('#coupons');
@@ -150,6 +151,94 @@ tryCodes.addEventListener('click', async () => {
   await refreshCheckout(checkoutCodes);
 });
 
+const alternatives = document.querySelector('#alternatives');
+const marketsInput = document.querySelector('#market');
+const findAlternatives = document.querySelector('#find-alternatives');
+const alternativesStatus = document.querySelector('#alternatives-status');
+const offerResults = document.querySelector('#alternative-results');
+
+async function showMarketPicker() {
+  const { shoppingCountry } = await chrome.storage.local.get('shoppingCountry');
+  const suggested = suggestMarket(Intl.DateTimeFormat().resolvedOptions().timeZone, navigator.languages);
+  for (const [code, [label]] of Object.entries(markets)) marketsInput.add(new Option(label, code));
+  marketsInput.value = Object.hasOwn(markets, shoppingCountry) ? shoppingCountry : suggested;
+  alternatives.hidden = false;
+}
+
+function renderOffers(results) {
+  const matchLabel = { exact: 'Exact variant', different_variant: 'Different variant', unconfirmed: 'Variant unconfirmed' };
+  for (const { name, variant, offers, partial, error } of results) {
+    const group = document.createElement('section');
+    const heading = document.createElement('h2');
+    heading.textContent = [name, variant].filter(Boolean).join(' · ');
+    group.append(heading);
+    if (!offers.length || partial || error) {
+      const note = document.createElement('p');
+      note.textContent = error ?? (!offers.length
+        ? 'No priced retailer offers found in this market.'
+        : 'Some retailer pages could not be checked.');
+      group.append(note);
+    }
+    const rows = document.createElement('ul');
+    for (const offer of offers) {
+      const row = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = offer.url;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      const price = new Intl.NumberFormat(navigator.language, {
+        style: 'currency', currency: offer.currency, currencyDisplay: 'code',
+      }).format(offer.price);
+      link.textContent = `${offer.retailer} · ${price}`;
+      const detail = document.createElement('p');
+      detail.textContent = [
+        matchLabel[offer.match], offer.variant, offer.availability === 'in_stock'
+          ? 'Listed in stock' : 'Stock unconfirmed',
+      ].filter(Boolean).join(' · ');
+      row.append(link, detail);
+      rows.append(row);
+    }
+    group.append(rows);
+    offerResults.append(group);
+  }
+}
+
+findAlternatives.addEventListener('click', async () => {
+  offerResults.replaceChildren();
+  findAlternatives.disabled = true;
+  marketsInput.disabled = true;
+  const country = marketsInput.value;
+  const [market] = markets[country];
+  alternativesStatus.textContent = `Checking retailers in ${market}…`;
+  try {
+    await chrome.storage.local.set({ shoppingCountry: country });
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId: basketTab }, func: readMyproteinBasket,
+    });
+    const items = injection?.result ?? [];
+    if (!items.length) {
+      alternativesStatus.textContent = 'Add a product to your Myprotein basket to compare retailers.';
+      return;
+    }
+    const { results } = await api('/v1/alternatives', { country, items: items.slice(0, basketLimit) });
+    alternativesStatus.textContent = [
+      `${market} · ${results.length} of ${items.length} basket products checked.`,
+      'Check delivery to your address on the retailer’s site.',
+    ].join(' ');
+    renderOffers(results);
+  } catch (error) {
+    alternativesStatus.textContent = error.message;
+  } finally {
+    findAlternatives.disabled = false;
+    marketsInput.disabled = false;
+  }
+});
+
+marketsInput.addEventListener('change', () => {
+  offerResults.replaceChildren();
+  alternativesStatus.textContent = '';
+});
+
 retry.addEventListener('click', loadCoupons);
 
 try {
@@ -164,6 +253,7 @@ try {
       basketTab = tab.id;
     }
     token = await installationToken();
+    if (basketTab) await showMarketPicker();
     await loadCoupons();
     if (basketTab && checkoutCodes.length) await refreshCheckout(null);
   }

@@ -16,7 +16,7 @@ export function normalizeMerchant(value) {
     && !/\.(?:local|localhost|internal|invalid|test|example|onion|lan)$/.test(host) ? host : null;
 }
 
-function sourceUrl(value) {
+export function sourceUrl(value) {
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port
@@ -28,8 +28,8 @@ function sourceUrl(value) {
   }
 }
 
-export function createDiscovery({ key, location, request = fetch }) {
-  async function call(endpoint, body) {
+export function createOxylabsClient({ key, request = fetch }) {
+  return async function call(endpoint, body, location) {
     const response = await request(`https://webapi.oxylabs.io/v1/${endpoint}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -42,13 +42,16 @@ export function createDiscovery({ key, location, request = fetch }) {
       throw new Error(`Oxylabs ${endpoint} returned an incomplete result`);
     }
     return data.results;
-  }
+  };
+}
 
+export function createDiscovery({ key, location, request }) {
+  const call = createOxylabsClient({ key, request });
   return async function discover(merchant) {
     const results = await call('search', {
       query: `${merchant} coupon codes promo codes discount checkout`,
       max_results: 10,
-    });
+    }, location);
 
     // Give each publisher one slot so reports can cite independent sources.
     const sources = new Map();
@@ -61,7 +64,7 @@ export function createDiscovery({ key, location, request = fetch }) {
     }
 
     const fetched = await Promise.allSettled([...sources.values()].map(async (url) => {
-      const pages = await call('scrape', { url, output: ['json'], json: { prompt: prompt(merchant) } });
+      const pages = await call('scrape', { url, output: ['json'], json: { prompt: prompt(merchant) } }, location);
       const rows = pages.flatMap((page) => Array.isArray(page.json?.coupons) ? [page.json.coupons] : []);
       if (!rows.length) throw new Error('Oxylabs could not extract a coupon list');
       return rows.flat().map((coupon) => ({ ...coupon, url }));
