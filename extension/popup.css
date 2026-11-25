@@ -144,6 +144,10 @@ main { flex: 0 1 auto; min-height: 0; padding: .75rem 1rem 1rem; overflow-y: aut
 /* Coupons: perforated tickets. The whole ticket is the copy button. */
 #coupons { display: grid; gap: .5rem; }
 .coupon { display: grid; }
+.coupon-main { --report-width: 6.75rem; display: grid; grid-template-columns: minmax(0, 1fr) 0rem; }
+.coupon-main[data-report-ready] { grid-template-columns: minmax(0, 1fr) var(--report-width); }
+.report-panel { display: grid; align-items: center; min-width: 0; overflow: hidden; opacity: 0; }
+.coupon-main[data-report-ready] .report-panel { opacity: 1; }
 .coupon-ticket {
   --stub: 4.5rem;
   --notch: .4375rem;
@@ -204,9 +208,8 @@ main { flex: 0 1 auto; min-height: 0; padding: .75rem 1rem 1rem; overflow-y: aut
 .coupon[data-trial-state="rejected"] .trial-result { color: var(--red); }
 .coupon[data-trial-state="rejected"] .trial-result::before { content: "✕" / ""; }
 
-/* Voting is available on every ticket. Counts and sources live in Details. */
-.coupon-feedback { position: relative; margin: .375rem .25rem 0; color: var(--muted); font-size: .75rem; }
-.coupon-more summary { position: absolute; inset-block-start: 0; inset-inline-end: 0; display: flex; align-items: center; gap: .25rem; min-height: 1.75rem; padding-inline: .125rem; border-radius: .375rem; cursor: pointer; list-style: none; }
+.coupon-more { margin-inline: .25rem; color: var(--muted); font-size: .75rem; }
+.coupon-more summary { display: flex; align-items: center; gap: .25rem; width: max-content; min-height: 1.5rem; margin-inline-start: auto; padding-inline: .125rem; border-radius: .375rem; cursor: pointer; list-style: none; }
 .coupon-more summary::-webkit-details-marker { display: none; }
 .coupon-more summary::after { content: ""; width: .75rem; height: .75rem; background: var(--chevron) center / contain no-repeat; }
 .coupon-more[open] summary::after { rotate: 180deg; }
@@ -216,9 +219,9 @@ main { flex: 0 1 auto; min-height: 0; padding: .75rem 1rem 1rem; overflow-y: aut
 .sources:empty { display: none; }
 .sources a { padding: .125rem .5rem; border-radius: 99px; background: var(--fill); font-weight: 550; text-decoration: none; }
 .sources a:hover { background: var(--fill-strong); }
-.votes { display: flex; align-items: center; flex-wrap: wrap; gap: .375rem; padding-inline-end: 5rem; }
-.votes-label { margin-inline-end: .125rem; }
-.votes button { min-height: 1.75rem; min-width: 2.5rem; padding: 0 .625rem; border-radius: 99px; font-size: .75rem; }
+.votes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .375rem; width: var(--report-width); padding: .375rem .25rem .375rem .625rem; text-align: center; }
+.votes-label { grid-column: 1 / -1; color: var(--ink); font-size: .75rem; font-weight: 600; }
+.votes button { min-height: 2rem; padding: 0 .25rem; border-radius: 99px; font-size: .75rem; }
 .votes .worked[aria-pressed="true"] { background: var(--green-soft); box-shadow: inset 0 0 0 1px var(--green-solid); color: var(--green); }
 .votes .failed[aria-pressed="true"] { background: var(--red-soft); box-shadow: inset 0 0 0 1px var(--red); color: var(--red); }
 
@@ -284,6 +287,8 @@ footer { display: grid; gap: .25rem; padding: .5rem 1rem .5625rem; border-top: 1
   button:not(:disabled):active { transform: scale(.97); }
   .coupon-ticket:not(:disabled):active { transform: scale(.985); }
   nav::before { transition: transform .3s var(--ease-out); }
+  .coupon-main { transition: grid-template-columns .28s var(--ease-out); }
+  .report-panel { transition: opacity .2s .07s; }
   .ticket-icon, .ticket-icon svg, .ticket-action { transition: opacity .15s, scale .25s var(--ease-out), translate .25s var(--ease-out); }
   .coupon-more summary::after { transition: rotate .2s var(--ease-out); }
   /* A view arrives from the side its tab sits on. */

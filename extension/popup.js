@@ -31,6 +31,8 @@ let checkoutCodes = [];
 let checkoutResult;
 let checkoutPoll;
 let scanExhausted = false;
+let copiedCouponKey;
+const copiedCodes = new Set();
 
 const accountAction = element('account-action');
 const accountRefresh = element('account-refresh');
@@ -135,6 +137,13 @@ function renderCoupons(data, savedReport) {
       ? `${coupon.worked} reported it worked · ${coupon.failed} reported it didn’t` : 'No reports yet';
     row.querySelector('.coupon-more').open = openDetails.has(coupon.code);
     row.querySelector('.votes').setAttribute('aria-label', `Did ${coupon.code} work?`);
+    const ticketArea = row.querySelector('.coupon-main');
+    const reportPanel = row.querySelector('.report-panel');
+    const revealReport = () => {
+      ticketArea.dataset.reportReady = '';
+      reportPanel.inert = false;
+    };
+    if (copiedCodes.has(coupon.code) || coupon.myReport === 0 || coupon.myReport === 1) revealReport();
     const sources = row.querySelector('.sources');
     if (coupon.sources.length) sources.append('Found on');
     for (const url of coupon.sources) {
@@ -153,9 +162,15 @@ function renderCoupons(data, savedReport) {
         status.textContent = 'Couldn’t copy. Try again.';
         return;
       }
+      if (!row.isConnected) return;
+      copiedCodes.add(coupon.code);
+      if (copiedCouponKey) {
+        void chrome.storage.session?.set({ [copiedCouponKey]: [...copiedCodes].slice(-24) }).catch(() => {});
+      }
+      revealReport();
       code.textContent = 'Copied';
       copy.setAttribute('data-copied', '');
-      feedback.textContent = `Copied ${coupon.code} to the clipboard.`;
+      feedback.textContent = `Copied ${coupon.code}. You can now report whether it worked.`;
       clearTimeout(copyTimeout);
       copyTimeout = setTimeout(() => {
         code.textContent = coupon.code;
@@ -378,6 +393,8 @@ marketInput.addEventListener('change', () => {
 
 function clearShoppingData() {
   clearTimeout(checkoutPoll);
+  copiedCouponKey = undefined;
+  copiedCodes.clear();
   checkoutResult = undefined;
   checkoutCodes = [];
   checkout.hidden = true;
@@ -413,6 +430,14 @@ async function refreshAccount() {
     }
     renderAccount(current);
     if (merchant) {
+      const key = `copiedCoupons:${current.userId}:${merchant}`;
+      if (copiedCouponKey !== key) {
+        copiedCouponKey = key;
+        const stored = await chrome.storage.session?.get(key).catch(() => undefined);
+        if (copiedCouponKey === key && Array.isArray(stored?.[key])) {
+          for (const code of stored[key]) copiedCodes.add(code);
+        }
+      }
       await Promise.all([
         loadCoupons(),
         basketTab && element('views').hidden ? activateBasketTools() : undefined,

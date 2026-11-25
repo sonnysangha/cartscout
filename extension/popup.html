@@ -84,35 +84,37 @@
 
   <template id="coupon">
     <li class="coupon">
-      <button type="button" class="coupon-ticket">
-        <span class="ticket-content">
-          <span class="code"></span>
-          <span class="offer"></span>
-        </span>
-        <span class="ticket-stub" aria-hidden="true">
-          <span class="ticket-icon">
-            <svg class="icon-copy" viewBox="0 0 20 20"><rect x="7" y="7" width="9.5" height="9.5" rx="2.5"/><path d="M13 7V5.5a2 2 0 0 0-2-2H5.5a2 2 0 0 0-2 2V11a2 2 0 0 0 2 2H7"/></svg>
-            <svg class="icon-check" viewBox="0 0 20 20"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg>
+      <div class="coupon-main">
+        <button type="button" class="coupon-ticket">
+          <span class="ticket-content">
+            <span class="code"></span>
+            <span class="offer"></span>
           </span>
-          <span class="ticket-action">Copy</span>
-        </span>
-      </button>
+          <span class="ticket-stub" aria-hidden="true">
+            <span class="ticket-icon">
+              <svg class="icon-copy" viewBox="0 0 20 20"><rect x="7" y="7" width="9.5" height="9.5" rx="2.5"/><path d="M13 7V5.5a2 2 0 0 0-2-2H5.5a2 2 0 0 0-2 2V11a2 2 0 0 0 2 2H7"/></svg>
+              <svg class="icon-check" viewBox="0 0 20 20"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg>
+            </span>
+            <span class="ticket-action">Copy</span>
+          </span>
+        </button>
+        <div class="report-panel" inert>
+          <div class="votes" role="group">
+            <span class="votes-label" aria-hidden="true">Did it work?</span>
+            <button type="button" class="worked secondary" aria-pressed="false">Yes</button>
+            <button type="button" class="failed secondary" aria-pressed="false">No</button>
+          </div>
+        </div>
+      </div>
       <span class="visually-hidden copy-feedback" role="status"></span>
       <p class="trial-result" hidden></p>
-      <div class="coupon-feedback">
-        <div class="votes" role="group">
-          <span class="votes-label" aria-hidden="true">Did it work?</span>
-          <button type="button" class="worked secondary" aria-pressed="false">Yes</button>
-          <button type="button" class="failed secondary" aria-pressed="false">No</button>
+      <details class="coupon-more">
+        <summary>Details</summary>
+        <div class="coupon-detail">
+          <p class="counts"></p>
+          <p class="sources"></p>
         </div>
-        <details class="coupon-more">
-          <summary>Details</summary>
-          <div class="coupon-detail">
-            <p class="counts"></p>
-            <p class="sources"></p>
-          </div>
-        </details>
-      </div>
+      </details>
     </li>
   </template>
 </body>
