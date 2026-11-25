@@ -1,10 +1,19 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 const DISCOVERY_VERSION = 2;
 const DAY = 86_400_000;
+const WEEK = 7 * DAY;
+const FREE_LIMIT = 5;
+const SCAN_LEASE = 3 * 60_000;
+
+function startOfScanWeek(now) {
+  const day = Math.floor(now / DAY);
+  // 1970-01-01 was a Thursday. Count from Monday at 00:00 UTC.
+  return (day - (((day + 3) % 7 + 7) % 7)) * DAY;
+}
 
 export function reporterKey(token) {
   return createHash('sha256').update(token).digest('hex');
@@ -40,6 +49,15 @@ export function openStore(path) {
       PRIMARY KEY (merchant, code, reporter),
       FOREIGN KEY (merchant, code) REFERENCES coupons (merchant, code)
     );
+    CREATE TABLE IF NOT EXISTS free_site_scans (
+      id TEXT PRIMARY KEY,
+      reporter TEXT NOT NULL,
+      week_start INTEGER NOT NULL,
+      started_at INTEGER NOT NULL,
+      complete INTEGER NOT NULL DEFAULT 0 CHECK (complete IN (0, 1))
+    );
+    CREATE INDEX IF NOT EXISTS free_site_scans_by_user_week
+      ON free_site_scans (reporter, week_start, complete, started_at);
   `);
 
   // Keep older codes and their reports, but rediscover public evidence before showing them.
@@ -92,6 +110,20 @@ export function openStore(path) {
       worked = excluded.worked, reported_at = excluded.reported_at
   `);
 
+  const countScans = db.prepare(`
+    SELECT COUNT(*) AS used FROM free_site_scans
+    WHERE reporter = ? AND week_start = ? AND (complete = 1 OR started_at > ?)
+  `);
+  const reserveScan = db.prepare(`
+    INSERT INTO free_site_scans (id, reporter, week_start, started_at)
+    SELECT :id, :reporter, :week, :started
+    WHERE (SELECT COUNT(*) FROM free_site_scans
+      WHERE reporter = :reporter AND week_start = :week AND (complete = 1 OR started_at > :cutoff)) < :limit
+    RETURNING id
+  `);
+  const releaseScan = db.prepare('DELETE FROM free_site_scans WHERE id = ? AND complete = 0');
+  const completeScan = db.prepare('UPDATE free_site_scans SET complete = 1 WHERE id = ? AND complete = 0');
+
   function listing(merchant, reporter, now) {
     return aggregate.all({
       reporter, merchant, version: DISCOVERY_VERSION, recent: now - 30 * DAY, cutoff: now - 7 * DAY,
@@ -102,7 +134,19 @@ export function openStore(path) {
   return {
     get: (merchant) => search.get(merchant, DISCOVERY_VERSION),
     listing,
-    save(merchant, { coupons, complete }, now) {
+    weeklyScans(reporter, now) {
+      const week = startOfScanWeek(now);
+      const { used } = countScans.get(reporter, week, now - SCAN_LEASE);
+      return { used, limit: FREE_LIMIT, remaining: Math.max(0, FREE_LIMIT - used), resetsAt: new Date(week + WEEK).toISOString() };
+    },
+    reserveScan(reporter, now) {
+      return reserveScan.get({
+        id: randomUUID(), reporter, week: startOfScanWeek(now), started: now,
+        cutoff: now - SCAN_LEASE, limit: FREE_LIMIT,
+      })?.id;
+    },
+    releaseScan: (reservation) => releaseScan.run(reservation),
+    save(merchant, { coupons, complete }, now, reservation) {
       const ttl = !complete ? 10 * 60_000 : coupons.length ? DAY : 2 * 60 * 60_000;
       db.exec('BEGIN IMMEDIATE');
       try {
@@ -110,6 +154,7 @@ export function openStore(path) {
           saveCoupon.run(merchant, coupon.code, coupon.offer, JSON.stringify(coupon.sources), coupon.expiresOn, now, DISCOVERY_VERSION);
         }
         saveSearch.run(merchant, now, now + ttl, Number(!complete), DISCOVERY_VERSION);
+        if (reservation) completeScan.run(reservation);
         db.exec('COMMIT');
       } catch (error) {
         db.exec('ROLLBACK');

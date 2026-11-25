@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "CartScout",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Find and try coupon codes and compare retailers for the products in your basket.",
   "permissions": [
     "activeTab",
     "storage",
     "clipboardWrite",
-    "scripting"
+    "scripting",
+    "cookies"
   ],
   "host_permissions": [
     "http://localhost/*"
@@ -28,5 +29,10 @@
     "32": "icons/icon-32.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0BHg7FY2ndjBqEzcAnnvP+KSBMqBsEI+n+1xCYhNWxoetZ2lAyfTPwa85XddCOzq4IMP5yBa+i5SIviuulTwaxz7oGeT+Jt/PR4F0AinW58+pROsXHLMbvXoL3zkledSHo9W5yq2ybw6eyo575p7wMwcVvp3dq0k4Vrp9aHdCPwvHshZPBgFdahFt8DbzS6/30ZeDsInSGlHjXCUSjTa/r+Hx3o136aZLGkw4U/QNyD9lQCVmuDNQ4zKa0xS5gYMWKt2GGKOcj7k/L9sMWfKVw+bN9w2yQm4zdFcZKkVzo1bo/4FP48YGWwZN3YRSHK2u8kphzritdD0wymmvjfYRQIDAQAB",
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
   }
 }

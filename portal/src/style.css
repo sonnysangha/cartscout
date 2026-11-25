@@ -1,0 +1,53 @@
+:root {
+  --forest: #17322a;
+  --leaf: #285843;
+  --mint: #e3ecd9;
+  --paper: #f6f7ef;
+  --muted: #536b61;
+  --line: #d3ded3;
+  color: var(--forest);
+  background-color: var(--paper);
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-synthesis: none;
+}
+
+main, .header, .action { box-sizing: border-box; }
+body { margin: 0; }
+a { text-underline-offset: .22em; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--leaf); outline-offset: 4px; }
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 74rem;
+  min-height: 4.5rem;
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 5vw, 3.25rem);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { display: inline-flex; align-items: center; gap: .65rem; color: inherit; font-weight: 750; text-decoration: none; }
+.mark { display: grid; place-items: center; width: 1.9rem; aspect-ratio: 1; background: var(--leaf); color: var(--paper); border-radius: .42rem; font-weight: 700; }
+.account-nav { display: flex; align-items: center; gap: clamp(.75rem, 4vw, 1.5rem); }
+.account-nav a { color: var(--muted); font-size: .875rem; text-decoration: none; }
+.account-nav a:hover, .account-nav a[aria-current="page"] { color: var(--forest); text-decoration: underline; }
+
+main { width: min(100% - 2rem, 66rem); margin: clamp(2rem, 7vw, 5rem) auto; }
+.narrow { max-width: 34rem; }
+.intro { margin-block-end: 1.6rem; }
+.intro h1, .account-page h1 { margin: 0 0 .65rem; font-size: clamp(1.7rem, 5vw, 2.65rem); line-height: 1.12; letter-spacing: -.04em; }
+.intro p { max-width: 39rem; margin: 0 0 .9rem; color: var(--muted); line-height: 1.5; }
+.auth { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: clamp(2rem, 8vw, 6.5rem); max-width: 54rem; }
+.auth .intro { padding-top: clamp(0rem, 4vw, 3rem); margin: 0; }
+.auth > :not(.intro) { max-width: 100%; min-width: 0; }
+.notice { display: inline-block; padding: .3rem .65rem; border-radius: .3rem; background: var(--mint); font-size: .8rem; font-weight: 650; }
+.action { display: inline-flex; margin-top: .45rem; padding: .6rem 1rem; background: var(--leaf); color: white; border-radius: .5rem; text-decoration: none; font-weight: 650; }
+.account-page h1 { margin-block-end: 1.35rem; }
+.return-note { margin-top: 1.45rem; }
+.return-note a { color: var(--leaf); }
+
+@media (max-width: 48rem) {
+  .auth { grid-template-columns: minmax(0, 1fr); gap: 1.3rem; max-width: 34rem; }
+  .auth .intro { padding-top: 0; }
+}

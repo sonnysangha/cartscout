@@ -38,7 +38,7 @@ test('retailer results use the requested country and distinguish variant and ava
 test('basket results are cached separately per country', async (t) => {
   const store = openStore(':memory:');
   const countries = [];
-  const server = createCouponServer({
+  const server = createCouponServer({ allowAnonymous: true,
     store, findAlternatives: async (_merchant, country) => {
       countries.push(country);
       return { offers: [], partial: false };

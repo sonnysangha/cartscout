@@ -10,7 +10,7 @@
 <body>
   <header>
     <div class="masthead">
-      <div class="brand"><img src="icons/icon-32.png" width="26" height="26" alt="">CartScout</div>
+      <div class="brand"><img src="icons/icon-128.png" width="33" height="33" alt="">CartScout</div>
       <span id="basket-marker" hidden>In your basket</span>
     </div>
     <h1 id="merchant">Find savings</h1>
@@ -18,8 +18,8 @@
   </header>
 
   <nav id="views" aria-label="Shopping tools" hidden>
-    <button id="show-coupons" aria-controls="coupon-view" aria-pressed="true">Coupon codes</button>
-    <button id="show-alternatives" aria-controls="alternatives" aria-pressed="false">Other retailers</button>
+    <button id="show-coupons" aria-controls="coupon-view" aria-pressed="true"><span class="tab-icon ticket-icon" aria-hidden="true"></span>Coupon codes</button>
+    <button id="show-alternatives" aria-controls="alternatives" aria-pressed="false"><span class="tab-icon shop-icon" aria-hidden="true"></span>Other retailers</button>
   </nav>
 
   <main>
@@ -43,10 +43,12 @@
     </section>
 
     <section id="alternatives" aria-label="Find other retailers" hidden>
-      <label for="market">Shop in</label>
-      <div class="market-row">
-        <select id="market"></select>
-        <button id="find-alternatives" class="primary">Find alternatives</button>
+      <div class="market-card">
+        <label for="market">Shop in</label>
+        <div class="market-row">
+          <select id="market"></select>
+          <button id="find-alternatives" class="primary">Find alternatives</button>
+        </div>
       </div>
       <p id="alternatives-status" role="status"></p>
       <div id="alternative-results"></div>
@@ -61,7 +63,7 @@
       <p class="offer"></p>
       <p class="trial-result" hidden></p>
       <div class="coupon-meta"><span class="counts"></span><span class="sources"></span></div>
-      <div class="votes" aria-label="Did this code work?">
+      <div class="votes" role="group" aria-label="Did this code work?">
         <button class="worked secondary" aria-pressed="false">Worked</button>
         <button class="failed secondary" aria-pressed="false">Didn’t work</button>
       </div>

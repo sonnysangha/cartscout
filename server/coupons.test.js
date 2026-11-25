@@ -56,7 +56,7 @@ test('shared cache, votes, vote changes, and persistence survive server restart'
 
   async function start() {
     const store = openStore(join(temp, 'shared.sqlite'));
-    const server = createCouponServer({ discover, store, now: () => time, log: () => {} });
+    const server = createCouponServer({ allowAnonymous: true, discover, store, now: () => time, log: () => {} });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     return {

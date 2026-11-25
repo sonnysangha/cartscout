@@ -1,3 +1,5 @@
+import { createRetailerOffer } from './presentation.js';
+import { getClerkToken, openAccountPortal } from './account.js';
 import { API_ORIGIN } from './config.js';
 import { readMyproteinBasket, runMyproteinCoupons } from './myprotein.js';
 import { basketLimit, markets, suggestMarket } from './markets.js';
@@ -22,36 +24,72 @@ const pounds = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GB
 
 let merchant;
 let basketTab;
-let token;
+let accountReady = false;
+let account;
+let lastCacheOnly;
 let checkoutCodes = [];
 let checkoutResult;
 let checkoutPoll;
 
-async function installationToken() {
-  return navigator.locks.request('cartscout-installation', async () => {
-    const { installToken } = await chrome.storage.local.get('installToken');
-    if (installToken) return installToken;
-    const generated = Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
-      byte.toString(16).padStart(2, '0')).join('');
-    await chrome.storage.local.set({ installToken: generated });
-    return generated;
-  });
+const accountPanel = document.createElement('section');
+accountPanel.id = 'account-panel';
+accountPanel.setAttribute('aria-label', 'CartScout account');
+accountPanel.innerHTML = `
+  <div class="account-row">
+    <div>
+      <strong id="account-plan">Your account</strong>
+      <p id="account-detail" role="status">Checking sign-in…</p>
+    </div>
+    <button id="account-action" class="primary" hidden>Sign in</button>
+  </div>
+  <button id="account-refresh" class="account-link" hidden>Refresh plan</button>
+`;
+document.querySelector('header').after(accountPanel);
+const accountAction = element('account-action');
+const accountRefresh = element('account-refresh');
+const scanButton = document.createElement('button');
+scanButton.id = 'scan-store';
+scanButton.className = 'primary';
+scanButton.textContent = 'Scan this store';
+scanButton.hidden = true;
+retry.before(scanButton);
+
+function renderAccount(next) {
+  account = next;
+  const pro = account?.plan === 'pro';
+  element('account-plan').textContent = account ? (pro ? 'Pro' : 'Free') : 'Your account';
+  element('account-detail').textContent = !account ? 'Sign in to find coupon codes.'
+    : pro ? 'Shared coupon cache unlocked'
+    : `${account.scans?.remaining ?? 0} of ${account.scans?.limit ?? 5} site scans left this week`;
+  accountAction.textContent = !account ? 'Sign in' : pro ? 'Manage plan' : 'Upgrade to Pro';
+  accountAction.hidden = false;
+  accountRefresh.hidden = !accountReady;
 }
 
-async function api(route, fields) {
+async function api(route, fields, { sessionToken } = {}) {
+  const token = sessionToken ?? await getClerkToken();
+  if (!token) throw new Error('Sign in to use CartScout.');
   let response;
   try {
+    const isAccount = route === '/v1/account';
     response = await fetch(new URL(route, API_ORIGIN), {
-      method: 'POST',
+      method: isAccount ? 'GET' : 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ merchant, ...fields }),
+      body: isAccount ? undefined : JSON.stringify({ merchant, ...fields }),
       signal: AbortSignal.timeout(75_000),
     });
   } catch {
     throw new Error('Couldn’t reach CartScout. Try again shortly.');
   }
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error ?? 'CartScout request failed.');
+  if (data.account) renderAccount(data.account);
+  if (response.status === 401) {
+    clearShoppingData();
+    renderAccount(null);
+  }
+  if (!response.ok) throw Object.assign(new Error(data.error ?? 'CartScout request failed.'), {
+    code: data.code, status: response.status,
+  });
   return data;
 }
 
@@ -72,6 +110,7 @@ function renderTrialResults() {
     const rejected = checkoutResult?.rejected?.includes(code);
     result.textContent = applied ? 'Applied to this basket' : rejected ? 'Rejected for this basket' : '';
     result.hidden = !applied && !rejected;
+    row.dataset.trialState = applied ? 'applied' : rejected ? 'rejected' : '';
   }
 }
 
@@ -84,7 +123,7 @@ function renderCoupons(data, savedReport) {
   status.textContent = [savedReport ? 'Report saved.' : '', count ? label : 'No public codes found.', context]
     .filter(Boolean).join(' ');
   element('coupon-summary').hidden = count === 0;
-  element('freshness').textContent = data.source === 'cache' ? 'Shared cache' : data.source === 'stale' ? 'Earlier results' : 'Checked just now';
+  element('freshness').textContent = data.source === 'cache' ? (account?.plan === 'pro' ? 'Shared cache' : 'Your cached scan') : data.source === 'stale' ? 'Earlier results' : 'Checked just now';
   const empty = element('coupon-empty');
   empty.hidden = count !== 0;
   empty.textContent = 'CartScout looks for full codes published by the shop or a coupon source.';
@@ -135,16 +174,30 @@ function renderCoupons(data, savedReport) {
   renderTrialResults();
 }
 
-async function loadCoupons() {
-  retry.hidden = true;
-  status.textContent = 'Looking for coupon codes…';
+async function loadCoupons(cacheOnly = account?.plan === 'free') {
+  lastCacheOnly = cacheOnly;
+  retry.hidden = scanButton.hidden = true;
+  status.textContent = cacheOnly ? 'Checking your saved codes…' : 'Looking for coupon codes…';
   try {
-    renderCoupons(await api('/v1/coupons'));
+    renderCoupons(await api('/v1/coupons', { cacheOnly }));
   } catch (error) {
-    status.textContent = error.message;
-    retry.hidden = false;
+    const empty = element('coupon-empty');
+    if (error.code === 'scan_required' || error.code === 'scan_limit') {
+      const exhausted = error.code === 'scan_limit' || !account?.scans?.remaining;
+      status.textContent = exhausted ? 'Weekly scan limit reached' : 'Ready to scan this store';
+      empty.textContent = exhausted
+        ? 'Your saved scans are still available. Upgrade to use the shared cache.'
+        : 'A new store uses one weekly scan. Its results are saved privately to your account.';
+      empty.hidden = false;
+      scanButton.hidden = exhausted;
+    } else {
+      status.textContent = error.message;
+      retry.hidden = false;
+    }
   }
 }
+
+scanButton.addEventListener('click', () => loadCoupons(false));
 
 function renderCheckout(result) {
   if (!result || result.state === 'idle') return;
@@ -206,7 +259,7 @@ stopCodes.addEventListener('click', async () => {
   stopCodes.disabled = true;
   await refreshCheckout('stop');
 });
-retry.addEventListener('click', loadCoupons);
+retry.addEventListener('click', () => loadCoupons(lastCacheOnly));
 
 function switchView(showAlternatives) {
   element('show-coupons').setAttribute('aria-pressed', String(!showAlternatives));
@@ -221,14 +274,15 @@ element('show-alternatives').addEventListener('click', () => switchView(true));
 async function activateBasketTools() {
   const { shoppingCountry } = await chrome.storage.local.get('shoppingCountry');
   const suggested = suggestMarket(Intl.DateTimeFormat().resolvedOptions().timeZone, navigator.languages);
-  for (const [code, [label]] of Object.entries(markets)) marketInput.add(new Option(label, code));
+  if (!marketInput.options.length) {
+    for (const [code, [label]] of Object.entries(markets)) marketInput.add(new Option(label, code));
+  }
   marketInput.value = Object.hasOwn(markets, shoppingCountry) ? shoppingCountry : suggested;
   element('views').hidden = element('basket-marker').hidden = false;
   await refreshCheckout();
 }
 
 function renderOffers(results) {
-  const matchLabel = { exact: 'Exact variant', different_variant: 'Different variant', unconfirmed: 'Variant unconfirmed' };
   for (const { name, variant, offers, partial, error } of results) {
     const group = document.createElement('section');
     const heading = document.createElement('h2');
@@ -249,22 +303,7 @@ function renderOffers(results) {
       group.append(note);
     }
     const rows = document.createElement('ul');
-    for (const offer of offers) {
-      const row = document.createElement('li');
-      const price = new Intl.NumberFormat(navigator.language, {
-        style: 'currency', currency: offer.currency, currencyDisplay: 'code',
-      }).format(offer.price);
-      const title = document.createElement('p');
-      title.textContent = offer.title;
-      const detail = document.createElement('p');
-      detail.className = 'offer-details';
-      detail.textContent = [
-        matchLabel[offer.match], offer.variant,
-        offer.availability === 'in_stock' ? 'Listed in stock' : 'Stock unconfirmed',
-      ].filter(Boolean).join(' · ');
-      row.append(externalLink(offer.url, `${offer.retailer} · ${price}`), title, detail);
-      rows.append(row);
-    }
+    for (const offer of offers) rows.append(createRetailerOffer(offer));
     group.append(rows);
     offerResults.append(group);
   }
@@ -315,20 +354,79 @@ marketInput.addEventListener('change', () => {
   alternativesStatus.textContent = '';
 });
 
+function clearShoppingData() {
+  clearTimeout(checkoutPoll);
+  checkoutResult = undefined;
+  checkoutCodes = [];
+  checkout.hidden = true;
+  list.replaceChildren();
+  scanButton.hidden = retry.hidden = true;
+  element('coupon-summary').hidden = element('coupon-empty').hidden = true;
+  element('views').hidden = element('basket-marker').hidden = true;
+  alternativeSearch = undefined;
+  offerResults.replaceChildren();
+  alternativesStatus.textContent = '';
+  moreAlternatives.hidden = true;
+  switchView(false);
+}
+
+async function refreshAccount() {
+  accountRefresh.disabled = accountAction.disabled = true;
+  accountRefresh.hidden = false;
+  try {
+    const token = await getClerkToken({ fresh: true });
+    accountReady = true;
+    if (!token) {
+      clearShoppingData();
+      renderAccount(null);
+      status.textContent = 'Sign in to search for savings.';
+      return;
+    }
+
+    const previous = account;
+    const current = await api('/v1/account', undefined, { sessionToken: token });
+    if (previous && (previous.userId !== current.userId || previous.plan !== current.plan)) {
+      clearShoppingData();
+    }
+    renderAccount(current);
+    if (merchant) {
+      await Promise.all([
+        loadCoupons(),
+        basketTab && element('views').hidden ? activateBasketTools() : undefined,
+      ]);
+    } else {
+      status.textContent = 'Open a store to find coupon codes.';
+    }
+  } catch (error) {
+    status.textContent = error.message;
+    if (!account) renderAccount(null);
+  } finally {
+    accountRefresh.disabled = accountAction.disabled = false;
+  }
+}
+
+accountAction.addEventListener('click', async () => {
+  try {
+    await openAccountPortal(account ? 'billing' : 'signin');
+  } catch {
+    status.textContent = 'Couldn’t open your CartScout account.';
+  }
+});
+accountRefresh.addEventListener('click', refreshAccount);
+
 try {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const url = tab?.url ? new URL(tab.url) : null;
-  if (!url || !['https:', 'http:'].includes(url.protocol)) {
-    status.textContent = 'Open a shop in the current tab to find coupon codes.';
-  } else {
+  if (url && ['https:', 'http:'].includes(url.protocol)) {
     merchant = url.hostname.replace(/^www\./, '');
     element('merchant').textContent = merchant;
     if (tab.id && merchant === 'myprotein.com' && url.protocol === 'https:' && /^\/basket\/?$/.test(url.pathname)) {
       basketTab = tab.id;
     }
-    token = await installationToken();
-    await Promise.all([loadCoupons(), basketTab ? activateBasketTools() : undefined]);
   }
-} catch {
-  status.textContent = 'Couldn’t read the current shop. Reopen CartScout to retry.';
+  await refreshAccount();
+} catch (error) {
+  status.textContent = error.message || 'Couldn’t start CartScout.';
+  accountAction.hidden = false;
+  accountAction.textContent = 'Open account';
 }

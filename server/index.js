@@ -3,11 +3,13 @@ import { pathToFileURL } from 'node:url';
 import { createDiscovery, normalizeCode, normalizeMerchant } from './oxylabs.js';
 import { createAlternativeDiscovery, parseBasket } from './alternatives.js';
 import { openStore, reporterKey } from './store.js';
+import { createClerkAuthenticator } from './auth.js';
 
 class HttpError extends Error {
-  constructor(status, message) {
+  constructor(status, message, details = {}) {
     super(message);
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -31,60 +33,90 @@ async function readJson(request) {
   }
 }
 
-export function createCouponServer({ store, discover, findAlternatives, now = Date.now, log = console.error }) {
+export function createCouponServer({
+  store, discover, findAlternatives, authenticate, allowAnonymous = false, now = Date.now, log = console.error,
+}) {
+  if (!authenticate && !allowAnonymous) throw new Error('Configure Clerk authentication.');
   const pending = new Map();
   const pendingAlternativeItems = new Map();
   const alternativeCache = new Map();
   let budgetWindow = 0;
   let discoveryCount = 0;
 
-  function payload(merchant, reporter, source) {
-    const search = store.get(merchant);
+  function accountDetails(identity, reporter) {
     return {
-      merchant, source, refreshedAt: search?.refreshed_at ?? null, partial: !!search?.partial,
-      coupons: store.listing(merchant, reporter, now()),
+      userId: identity.userId,
+      plan: identity.plan,
+      scans: identity.plan === 'free' ? store.weeklyScans(reporter, now()) : null,
     };
   }
 
-  async function lookup(merchant, reporter) {
-    const time = now();
-    const cached = store.get(merchant);
-    if (cached?.retry_at > time) return payload(merchant, reporter, 'cache');
+  function payload(merchant, cacheKey, reporter, source, identity) {
+    const search = store.get(cacheKey);
+    return {
+      merchant, source, refreshedAt: search?.refreshed_at ?? null, partial: !!search?.partial,
+      coupons: store.listing(cacheKey, reporter, now()),
+      ...(identity && { account: accountDetails(identity, reporter) }),
+    };
+  }
 
-    let refresh = pending.get(merchant);
+  async function lookup(merchant, cacheKey, reporter, identity, cacheOnly) {
+    const time = now();
+    const cached = store.get(cacheKey);
+    if (cached?.retry_at > time) return payload(merchant, cacheKey, reporter, 'cache', identity);
+    if (cacheOnly && identity) {
+      throw new HttpError(409, 'Scan this site to find coupon codes.', {
+        code: 'scan_required', account: accountDetails(identity, reporter),
+      });
+    }
+
+    let refresh = pending.get(cacheKey);
     if (!refresh) {
       const window = Math.floor(time / 60_000);
       if (budgetWindow !== window) {
         budgetWindow = window;
         discoveryCount = 0;
       }
+      const limited = identity?.plan === 'free';
+      const reservation = limited ? store.reserveScan(reporter, time) : null;
+      if (limited && !reservation) {
+        throw new HttpError(429, 'You’ve used all 5 free site scans for this week.', {
+          code: 'scan_limit', account: accountDetails(identity, reporter),
+        });
+      }
       if (pending.size >= 5 || discoveryCount >= 15) {
-        if (cached) return payload(merchant, reporter, 'stale');
+        if (reservation) store.releaseScan(reservation);
+        if (cached) return payload(merchant, cacheKey, reporter, 'stale', identity);
         throw new HttpError(429, 'Coupon search is busy. Try again shortly.');
       }
       discoveryCount += 1;
       refresh = (async () => {
-        const result = await discover(merchant);
-        store.save(merchant, result, now());
+        try {
+          const result = await discover(merchant);
+          store.save(cacheKey, result, now(), reservation);
+        } catch (error) {
+          if (reservation) store.releaseScan(reservation);
+          throw error;
+        }
       })();
-      pending.set(merchant, refresh);
+      pending.set(cacheKey, refresh);
     }
     try {
       await refresh;
-      return payload(merchant, reporter, 'live');
+      return payload(merchant, cacheKey, reporter, 'live', identity);
     } catch (error) {
       log('Coupon discovery failed:', error.message);
-      if (cached) return payload(merchant, reporter, 'stale');
+      if (cached) return payload(merchant, cacheKey, reporter, 'stale', identity);
       throw new HttpError(502, 'Coupon search is temporarily unavailable. Try again shortly.');
     } finally {
-      if (pending.get(merchant) === refresh) pending.delete(merchant);
+      if (pending.get(cacheKey) === refresh) pending.delete(cacheKey);
     }
   }
 
-  async function alternatives(merchant, country, items) {
+  async function alternatives(merchant, cacheKey, country, items) {
     if (!findAlternatives) throw new HttpError(503, 'Retailer search is unavailable.');
     const lookups = items.map(async (item) => {
-      const key = JSON.stringify([merchant, country, item.name.toLowerCase(), item.variant.toLowerCase()]);
+      const key = JSON.stringify([cacheKey, country, item.name.toLowerCase(), item.variant.toLowerCase()]);
       const cached = alternativeCache.get(key);
       if (cached?.expiresAt > now()) return cached.value;
       if (pendingAlternativeItems.has(key)) return pendingAlternativeItems.get(key);
@@ -128,32 +160,46 @@ export function createCouponServer({ store, discover, findAlternatives, now = Da
 
     try {
       if (request.url === '/health' && request.method === 'GET') return send(200, { ok: true });
-      if (request.method !== 'POST' || !['/v1/coupons', '/v1/reports', '/v1/alternatives'].includes(request.url)) {
+      const wantsAccount = request.method === 'GET' && request.url === '/v1/account';
+      if (!wantsAccount && (request.method !== 'POST' || !['/v1/coupons', '/v1/reports', '/v1/alternatives'].includes(request.url))) {
         throw new HttpError(404, 'Route not found.');
       }
+
+      const token = request.headers.authorization?.match(/^Bearer (\S+)$/i)?.[1];
+      const identity = authenticate && token ? await authenticate(token) : null;
+      if (!identity && (wantsAccount || authenticate || !token || !/^[a-f0-9]{64}$/.test(token))) {
+        throw new HttpError(401, 'Sign in to CartScout to continue.', { code: 'sign_in_required' });
+      }
+      const reporter = reporterKey(identity ? `clerk:${identity.userId}` : token);
+      if (wantsAccount) return send(200, accountDetails(identity, reporter));
+
       const body = await readJson(request);
       const merchant = normalizeMerchant(body.merchant);
       if (!merchant) throw new HttpError(400, 'Enter a public merchant hostname.');
-      const token = request.headers.authorization?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
-      if (!token) throw new HttpError(401, 'Missing installation token.');
+      const cacheKey = identity?.plan === 'free' ? `private:${reporter}:${merchant}` : merchant;
       if (request.url === '/v1/alternatives') {
         const basket = parseBasket(body);
         if (!basket) throw new HttpError(400, 'Choose a supported country and provide basket products.');
-        return send(200, await alternatives(merchant, basket.country, basket.items));
+        return send(200, await alternatives(merchant, cacheKey, basket.country, basket.items));
       }
-      const reporter = reporterKey(token);
-      if (request.url === '/v1/coupons') return send(200, await lookup(merchant, reporter));
+      if (request.url === '/v1/coupons') {
+        if (Object.hasOwn(body, 'cacheOnly') && typeof body.cacheOnly !== 'boolean') {
+          throw new HttpError(400, 'The cacheOnly option must be true or false.');
+        }
+        return send(200, await lookup(merchant, cacheKey, reporter, identity, body.cacheOnly));
+      }
       const code = normalizeCode(body.code);
       if (!code || typeof body.worked !== 'boolean') {
         throw new HttpError(400, 'Enter a coupon and whether it worked.');
       }
-      if (!store.report(merchant, code, reporter, body.worked, now())) {
+      if (!store.report(cacheKey, code, reporter, body.worked, now())) {
         throw new HttpError(404, 'This code is no longer in the merchant results.');
       }
-      return send(200, payload(merchant, reporter, 'cache'));
+      return send(200, payload(merchant, cacheKey, reporter, 'cache', identity));
     } catch (error) {
-      if (!(error instanceof HttpError)) log('Coupon API request failed:', error.message);
-      return send(error.status ?? 500, { error: error.status ? error.message : 'Coupon service error.' });
+      if (error instanceof HttpError) return send(error.status, { error: error.message, ...error.details });
+      log('Coupon API request failed:', error.message);
+      return send(500, { error: 'Coupon service error.' });
     }
   });
 }
@@ -163,11 +209,21 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (!key) throw new Error('Set OXYLABS_WEB_API_KEY on the coupon server.');
   const location = process.env.OXYLABS_LOCATION?.trim().toUpperCase();
   if (location && !/^[A-Z]{2}$/.test(location)) throw new Error('Use a two-letter OXYLABS_LOCATION.');
-  const store = openStore(process.env.DATABASE_PATH || 'data/cartscout.sqlite');
-  const server = createCouponServer({
-    store, discover: createDiscovery({ key, location }), findAlternatives: createAlternativeDiscovery({ key }),
-  });
   const host = process.env.HOST || '127.0.0.1';
   const port = Number(process.env.PORT || 8787);
+  const configured = process.env.CLERK_SECRET_KEY || process.env.CLERK_PUBLISHABLE_KEY || process.env.CLERK_ALLOWED_ORIGINS;
+  const allowAnonymous = !configured && process.env.CARTSCOUT_ALLOW_ANONYMOUS === '1'
+    && process.env.NODE_ENV !== 'production' && ['127.0.0.1', '::1', 'localhost'].includes(host);
+  const authenticate = allowAnonymous ? undefined : createClerkAuthenticator({
+    secretKey: process.env.CLERK_SECRET_KEY,
+    publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
+    allowedOrigins: process.env.CLERK_ALLOWED_ORIGINS,
+    proPlan: process.env.CLERK_PRO_PLAN || 'pro',
+  });
+  const store = openStore(process.env.DATABASE_PATH || 'data/cartscout.sqlite');
+  const server = createCouponServer({
+    store, authenticate, allowAnonymous,
+    discover: createDiscovery({ key, location }), findAlternatives: createAlternativeDiscovery({ key }),
+  });
   server.listen(port, host, () => console.log(`CartScout API listening on ${host}:${server.address().port}`));
 }

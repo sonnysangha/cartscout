@@ -1,0 +1,22 @@
+{
+  "name": "cartscout-account",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.14"
+  },
+  "scripts": {
+    "dev": "vite --host localhost --port 8788 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --host localhost --port 8788 --strictPort"
+  },
+  "dependencies": {
+    "@clerk/react": "6.19.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "vite": "8.3.8"
+  }
+}
