@@ -204,23 +204,21 @@ main { flex: 0 1 auto; min-height: 0; padding: .75rem 1rem 1rem; overflow-y: aut
 .coupon[data-trial-state="rejected"] .trial-result { color: var(--red); }
 .coupon[data-trial-state="rejected"] .trial-result::before { content: "✕" / ""; }
 
-/* Reports, sources and votes stay one quiet line until asked for */
-.coupon-more { margin-inline: .25rem; color: var(--muted); font-size: .71875rem; }
-.coupon-more summary { display: inline-flex; align-items: center; gap: .375rem; min-height: 1.75rem; padding-inline: .125rem; border-radius: .375rem; cursor: pointer; list-style: none; }
+/* Voting is available on every ticket. Counts and sources live in Details. */
+.coupon-feedback { position: relative; margin: .375rem .25rem 0; color: var(--muted); font-size: .75rem; }
+.coupon-more summary { position: absolute; inset-block-start: 0; inset-inline-end: 0; display: flex; align-items: center; gap: .25rem; min-height: 1.75rem; padding-inline: .125rem; border-radius: .375rem; cursor: pointer; list-style: none; }
 .coupon-more summary::-webkit-details-marker { display: none; }
-.coupon:is([data-trust="good"], [data-trust="mixed"]) summary::before { content: ""; width: .375rem; height: .375rem; border-radius: 50%; background: var(--green-solid); }
-.coupon[data-trust="mixed"] summary::before { background: var(--amber); }
 .coupon-more summary::after { content: ""; width: .75rem; height: .75rem; background: var(--chevron) center / contain no-repeat; }
 .coupon-more[open] summary::after { rotate: 180deg; }
 .coupon-more summary:hover { color: var(--ink); }
-.coupon-detail { display: grid; gap: .5rem; padding: .25rem .125rem .5rem; }
+.coupon-detail { display: grid; gap: .375rem; padding: .5rem 0 .25rem; }
 .sources { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .375rem; }
 .sources:empty { display: none; }
 .sources a { padding: .125rem .5rem; border-radius: 99px; background: var(--fill); font-weight: 550; text-decoration: none; }
 .sources a:hover { background: var(--fill-strong); }
-.votes { display: flex; align-items: center; gap: .375rem; }
+.votes { display: flex; align-items: center; flex-wrap: wrap; gap: .375rem; padding-inline-end: 5rem; }
 .votes-label { margin-inline-end: .125rem; }
-.votes button { min-height: 1.625rem; padding: 0 .625rem; border-radius: 99px; font-size: .71875rem; }
+.votes button { min-height: 1.75rem; min-width: 2.5rem; padding: 0 .625rem; border-radius: 99px; font-size: .75rem; }
 .votes .worked[aria-pressed="true"] { background: var(--green-soft); box-shadow: inset 0 0 0 1px var(--green-solid); color: var(--green); }
 .votes .failed[aria-pressed="true"] { background: var(--red-soft); box-shadow: inset 0 0 0 1px var(--red); color: var(--red); }
 

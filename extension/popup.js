@@ -119,12 +119,12 @@ function renderCoupons(data, savedReport) {
   empty.textContent = 'CartScout looks for full codes published by the shop or a coupon source.';
   checkout.hidden = !basketTab || (!count && !checkoutResult);
   if (checkoutResult?.state !== 'running') tryCodes.disabled = !count;
+  const openDetails = new Set([...list.querySelectorAll('.coupon-more[open]')].map((details) => details.closest('.coupon').dataset.code));
   list.replaceChildren();
 
   for (const coupon of data.coupons) {
     const row = element('coupon').content.firstElementChild.cloneNode(true);
     row.dataset.code = coupon.code;
-    row.dataset.trust = !(coupon.worked || coupon.failed) ? 'none' : coupon.worked > coupon.failed ? 'good' : 'mixed';
     const code = row.querySelector('.code');
     code.textContent = coupon.code;
     const offer = row.querySelector('.offer');
@@ -132,12 +132,9 @@ function renderCoupons(data, savedReport) {
     offer.textContent = coupon.offer;
     const counts = row.querySelector('.counts');
     counts.textContent = coupon.worked || coupon.failed
-      ? `${coupon.worked} worked · ${coupon.failed} failed` : 'No reports yet';
-    counts.append(Object.assign(document.createElement('span'), {
-      className: 'visually-hidden', textContent: ' · sources and feedback',
-    }));
-    // Keep the disclosure open once someone has reported, so their vote stays visible and focusable.
-    row.querySelector('.coupon-more').open = coupon.myReport === 0 || coupon.myReport === 1;
+      ? `${coupon.worked} reported it worked · ${coupon.failed} reported it didn’t` : 'No reports yet';
+    row.querySelector('.coupon-more').open = openDetails.has(coupon.code);
+    row.querySelector('.votes').setAttribute('aria-label', `Did ${coupon.code} work?`);
     const sources = row.querySelector('.sources');
     if (coupon.sources.length) sources.append('Found on');
     for (const url of coupon.sources) {

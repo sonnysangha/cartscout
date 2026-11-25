@@ -99,17 +99,20 @@
       </button>
       <span class="visually-hidden copy-feedback" role="status"></span>
       <p class="trial-result" hidden></p>
-      <details class="coupon-more">
-        <summary><span class="counts"></span></summary>
-        <div class="coupon-detail">
-          <p class="sources"></p>
-          <div class="votes" role="group" aria-label="Did this code work?">
-            <span class="votes-label" aria-hidden="true">Did it work?</span>
-            <button class="worked secondary" aria-pressed="false">Worked</button>
-            <button class="failed secondary" aria-pressed="false">Didn’t work</button>
-          </div>
+      <div class="coupon-feedback">
+        <div class="votes" role="group">
+          <span class="votes-label" aria-hidden="true">Did it work?</span>
+          <button type="button" class="worked secondary" aria-pressed="false">Yes</button>
+          <button type="button" class="failed secondary" aria-pressed="false">No</button>
         </div>
-      </details>
+        <details class="coupon-more">
+          <summary>Details</summary>
+          <div class="coupon-detail">
+            <p class="counts"></p>
+            <p class="sources"></p>
+          </div>
+        </details>
+      </div>
     </li>
   </template>
 </body>
