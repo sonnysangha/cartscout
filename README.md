@@ -18,6 +18,14 @@ their sources, and lets you copy a code and report whether it worked.
    Select the [extension](extension) directory.
 4. Open a store and click **CartScout Coupons** in Chrome's toolbar.
 
+### Try codes in a Myprotein UK basket
+
+With at least one item in the basket, open CartScout on `https://www.myprotein.com/basket/`
+and click **Try codes at checkout**. CartScout submits up to 10 discovered codes to the
+basket’s discount form in order. It leaves an accepted code applied and shows the before
+and after subtotal when it can confirm a saving. An existing promo code or text already
+entered in the discount field blocks a new run. Reports stay manual.
+
 ### Discovery and reports
 
 The backend sends the merchant hostname to Oxylabs `/v1/search`, then uses `/v1/scrape` to extract

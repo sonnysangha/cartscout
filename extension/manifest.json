@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "CartScout Coupons",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Find coupon codes for the shop you are visiting and see whether other shoppers got them to work.",
-  "permissions": ["activeTab", "storage", "clipboardWrite"],
+  "permissions": ["activeTab", "storage", "clipboardWrite", "scripting"],
   "host_permissions": ["http://localhost/*"],
   "action": { "default_popup": "popup.html", "default_title": "Find coupon codes" }
 }

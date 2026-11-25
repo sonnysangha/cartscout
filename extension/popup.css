@@ -22,3 +22,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid #397452; outline-offs
 button:disabled { cursor: wait; opacity: .6; }
 .copy, button[aria-pressed="true"] { flex-shrink: 0; background: #dbec9f; border-color: #c8da89; }
 footer { padding: 10px 14px 14px; }
+#checkout { padding: 0 0 12px; }
+#try-codes { width: 100%; padding: 10px; }
+#checkout-status:not(:empty) { margin: 8px 2px 0; color: #294938; }

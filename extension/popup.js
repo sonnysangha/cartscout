@@ -1,9 +1,16 @@
 import { API_ORIGIN } from './config.js';
+import { runMyproteinCoupons } from './myprotein.js';
 
 const status = document.querySelector('#status');
 const list = document.querySelector('#coupons');
 const retry = document.querySelector('#retry');
 const template = document.querySelector('#coupon');
+const checkout = document.querySelector('#checkout');
+const tryCodes = document.querySelector('#try-codes');
+const checkoutStatus = document.querySelector('#checkout-status');
+const pounds = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
+let basketTab;
+let checkoutCodes = [];
 let merchant;
 let token;
 
@@ -44,6 +51,8 @@ function render(data, savedReport) {
     data.coupons.length ? label : 'No codes found for this shop.',
     context,
   ].filter(Boolean).join(' ');
+  checkoutCodes = data.coupons.map(({ code }) => code);
+  checkout.hidden = !basketTab || !checkoutCodes.length;
   list.replaceChildren();
   for (const coupon of data.coupons) {
     const row = template.content.firstElementChild.cloneNode(true);
@@ -97,6 +106,50 @@ async function loadCoupons() {
   }
 }
 
+async function checkoutTrial(codes) {
+  const [injection] = await chrome.scripting.executeScript({
+    target: { tabId: basketTab }, func: runMyproteinCoupons, args: [codes],
+  });
+  return injection?.result;
+}
+
+async function showCheckout(result) {
+  tryCodes.disabled = result?.state === 'running';
+  const messages = {
+    idle: '',
+    running: `Trying checkout codes… ${result?.attempted ?? 0} of ${result?.total ?? 0}`,
+    saved: `${result?.code} applied. Basket subtotal fell from ${pounds.format(result?.before / 100)} to ${pounds.format(result?.after / 100)}.`,
+    noMatch: `Myprotein rejected all ${result?.attempted} attempted codes for this basket.`,
+    accepted: `Myprotein accepted ${result?.code}. CartScout couldn’t confirm a lower subtotal.`,
+    alreadyApplied: 'Your basket already has a promo code applied.',
+    inputOccupied: 'Clear the discount field before trying codes.',
+    unavailable: 'Open a Myprotein UK basket with an item and a discount field.',
+    unsupported: 'Open your Myprotein UK basket to try codes.',
+    changed: 'The basket changed. Check it before trying again.',
+    unknown: `Myprotein’s response to ${result?.code || 'the code'} was unclear. Check your basket before trying again.`,
+  };
+  checkoutStatus.textContent = messages[result?.state] ?? messages.unavailable;
+  if (result?.state === 'running') {
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await showCheckout(await checkoutTrial(null));
+  }
+}
+
+async function refreshCheckout(codes) {
+  try {
+    await showCheckout(await checkoutTrial(codes));
+  } catch {
+    tryCodes.disabled = false;
+    checkoutStatus.textContent = 'Couldn’t read the basket. Reopen CartScout and try again.';
+  }
+}
+
+tryCodes.addEventListener('click', async () => {
+  tryCodes.disabled = true;
+  checkoutStatus.textContent = 'Trying checkout codes…';
+  await refreshCheckout(checkoutCodes);
+});
+
 retry.addEventListener('click', loadCoupons);
 
 try {
@@ -107,8 +160,12 @@ try {
   } else {
     merchant = url.hostname.replace(/^www\./, '');
     document.querySelector('#merchant').textContent = merchant;
+    if (tab.id && merchant === 'myprotein.com' && url.protocol === 'https:' && /^\/basket\/?$/.test(url.pathname)) {
+      basketTab = tab.id;
+    }
     token = await installationToken();
     await loadCoupons();
+    if (basketTab && checkoutCodes.length) await refreshCheckout(null);
   }
 } catch {
   status.textContent = 'Couldn’t read the current shop. Reopen CartScout to retry.';
