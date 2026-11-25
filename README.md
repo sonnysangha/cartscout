@@ -115,7 +115,7 @@ unzip -o dist/cartscout-1.1.0-local.zip -d dist/cartscout-extension
 
 ### Scan a store and try a coupon
 
-1. Visit [Myprotein UK](https://www.myprotein.com/) or [Currys](https://www.currys.co.uk/), open CartScout, and check **Coupon codes**.
+1. Visit [Myprotein UK](https://www.myprotein.com/) or [Currys](https://www.currys.co.uk/), open CartScout, and check **Coupons**.
 2. With a fresh Free account, click **Scan this store** and check your balance. Reopen the same store while the cache is fresh to see **Your cached scan** with no extra scan used.
 3. To try a discovered code, open a [Myprotein UK basket](https://www.myprotein.com/basket/) with an item and an empty promo field. Click **Try codes at checkout**. You can stop after the current code and report the outcome once you’ve checked your basket.
 

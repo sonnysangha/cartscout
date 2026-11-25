@@ -1,112 +1,310 @@
+/* Ticket colours are registered so a copied or applied ticket eases between states. */
+@property --ticket-paper { syntax: "<color>"; inherits: true; initial-value: transparent; }
+@property --ticket-stub { syntax: "<color>"; inherits: true; initial-value: transparent; }
+
 :root {
-  color-scheme: light;
-  font: 14px/1.38 "Avenir Next", "Trebuchet MS", sans-serif;
-  color: #33283f;
-  background: #fffbf4;
-  --ink: #33283f;
-  --muted: #665971;
-  --accent: #a33738;
-  --coral: #f8ad99;
-  --peach: #ffe5d8;
-  --paper: #fffbf4;
-  --white: #fff;
-  --line: #e8dfd9;
-  --lilac: #f0e9f7;
-  --green: #22543b;
-  --mint: #e2f2e4;
+  color-scheme: light dark;
+  font: 100%/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --canvas: #fff;
+  --paper: #fbf4ed;
+  --ink: #2b2134;
+  --muted: #655a6e;
+  --faint: #776c80;
+  --line: rgb(43 33 52 / 10%);
+  --line-strong: rgb(43 33 52 / 18%);
+  --fill: rgb(43 33 52 / 6%);
+  --fill-strong: rgb(43 33 52 / 10%);
+  --thumb: #fff;
+  --primary: #3c2a4d;
+  --primary-hover: #4e3963;
+  --on-primary: #fff;
+  --link: #5a3572;
+  --peach: #f3a48d;
+  --peach-soft: #fde8de;
+  --peach-ink: #8a3a29;
+  --green: #1d6a45;
+  --green-soft: #e1f3e7;
+  --green-solid: #2a7d55;
+  --amber: #c4841a;
+  --amber-ink: #86560a;
+  --red: #a23636;
+  --red-soft: #fbe9e7;
   --focus: #6a378b;
-  --radius: 14px;
+  --ticket-edge: drop-shadow(0 0 .5px rgb(90 50 40 / 55%)) drop-shadow(0 1px 1.5px rgb(90 50 40 / 8%));
+  --ticket-lift: drop-shadow(0 0 .5px rgb(90 50 40 / 55%)) drop-shadow(0 4px 8px rgb(90 50 40 / 14%));
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23655a6e' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2.5 4.5 3.5 3.5 3.5-3.5'/%3E%3C/svg%3E");
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  color: var(--ink);
+  background: var(--canvas);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #1c1622;
+    --paper: #2a2132;
+    --ink: #f4eef7;
+    --muted: #b9aec2;
+    --faint: #a195ab;
+    --line: rgb(255 255 255 / 10%);
+    --line-strong: rgb(255 255 255 / 20%);
+    --fill: rgb(255 255 255 / 7%);
+    --fill-strong: rgb(255 255 255 / 13%);
+  --thumb: rgb(255 255 255 / 16%);
+    --primary: #f6ad97;
+    --primary-hover: #f9bfad;
+    --on-primary: #2a1a22;
+    --link: #d9bcee;
+    --peach-soft: #45303a;
+    --peach-ink: #f8b9a6;
+    --green: #86d8a8;
+    --green-soft: #1e3a2c;
+    --green-solid: #2f8a5e;
+    --amber: #e0a646;
+    --amber-ink: #ecc078;
+    --red: #f2a09d;
+    --red-soft: #452628;
+    --focus: #cfa9ea;
+    --ticket-edge: drop-shadow(0 0 .5px rgb(255 255 255 / 30%));
+    --ticket-lift: drop-shadow(0 0 .5px rgb(255 255 255 / 30%)) drop-shadow(0 4px 8px rgb(0 0 0 / 35%));
+    --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23b9aec2' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2.5 4.5 3.5 3.5 3.5-3.5'/%3E%3C/svg%3E");
+  }
 }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { width: 408px; max-width: 100%; max-height: 600px; margin: 0; display: flex; flex-direction: column; }
-header, #account-panel, nav, footer { flex: none; }
-header { padding: 16px 18px 15px; color: var(--ink); background: var(--peach); border-bottom: 1px solid #efcdbd; }
-.masthead, .brand, .coupon-top, .coupon-meta, .section-top, .market-row, .actions, .votes, .account-row {
-  display: flex; align-items: center; gap: 9px;
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+body { width: 23.75rem; max-width: 100%; max-height: 600px; margin: 0; display: flex; flex-direction: column; background: var(--canvas); }
+header, nav, footer { flex: none; }
+p, h1, h2 { margin: 0; }
+ol, ul { padding: 0; margin: 0; list-style: none; }
+svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Header: where you are, and what CartScout found */
+header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: .75rem; padding: 1rem 1rem .75rem; }
+.mark { grid-row: 1 / 3; align-self: center; width: 2.25rem; height: 2.25rem; }
+.heading { display: contents; }
+h1 { align-self: end; font-size: 1.0625rem; font-weight: 650; line-height: 1.25; letter-spacing: -.015em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#status { grid-column: 2 / -1; color: var(--muted); font-size: .78125rem; line-height: 1.35; }
+/* Announced, not shown: the basket tools appearing already say where you are. */
+#basket-marker { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Controls */
+button, select { font: inherit; font-size: .8125rem; font-weight: 600; color: var(--ink); }
+button { min-height: 2.25rem; padding: 0 1rem; border: 0; border-radius: 99px; cursor: pointer; touch-action: manipulation; transition: background-color .15s, color .15s, transform .1s ease-out; }
+button:focus-visible, a:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button:disabled { cursor: wait; opacity: .55; }
+.primary { background: var(--primary); color: var(--on-primary); }
+.primary:not(:disabled):hover { background: var(--primary-hover); }
+.secondary { background: none; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.secondary:not(:disabled):hover { background: var(--fill); }
+.quiet { min-height: 2rem; padding: 0 .5rem; background: none; color: var(--link); }
+.quiet:not(:disabled):hover { background: var(--fill); }
+.icon-button { flex: none; display: grid; place-items: center; width: 2rem; min-height: 2rem; padding: 0; border-radius: 50%; background: none; color: var(--muted); }
+.icon-button:not(:disabled):hover { background: var(--fill); color: var(--ink); }
+.icon-button svg { width: 1.125rem; height: 1.125rem; }
+a { color: var(--link); text-underline-offset: 3px; overflow-wrap: anywhere; }
+
+/* The two tools, as a segmented control */
+nav { position: relative; display: grid; grid-template-columns: 1fr 1fr; margin: 0 1rem .25rem; padding: 3px; border-radius: 99px; background: var(--fill); }
+nav::before { content: ""; position: absolute; inset: 3px auto 3px 3px; width: calc(50% - 3px); border-radius: 99px; background: var(--thumb); box-shadow: 0 0 0 .5px rgb(0 0 0 / 6%), 0 1px 3px rgb(0 0 0 / 12%); }
+nav:has(#show-alternatives[aria-pressed="true"])::before { transform: translateX(100%); }
+nav button { position: relative; min-height: 1.875rem; padding: 0 .5rem; background: none; color: var(--muted); }
+nav button[aria-pressed="true"] { color: var(--ink); }
+nav button:not([aria-pressed="true"]):hover { color: var(--ink); }
+
+main { flex: 0 1 auto; min-height: 0; padding: .75rem 1rem 1rem; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--fill-strong) transparent; mask-image: linear-gradient(#0000, #000 .625rem calc(100% - .75rem), #0000); }
+
+/* Checkout: the one salient action on a basket */
+.checkout { display: grid; gap: .625rem; margin-bottom: .875rem; }
+#checkout-status { color: var(--muted); font-size: .8125rem; font-variant-numeric: tabular-nums; }
+#checkout-status:empty { display: none; }
+#checkout-progress { appearance: none; display: block; width: 100%; height: .375rem; overflow: hidden; border: 0; border-radius: 99px; background: var(--fill-strong); }
+#checkout-progress::-webkit-progress-bar { background: none; }
+#checkout-progress::-webkit-progress-value { border-radius: 99px; background: var(--primary); transition: inline-size .3s var(--ease-out); }
+.checkout .actions { display: flex; gap: .5rem; }
+.checkout .actions:not(:has(button:not([hidden]))) { display: none; }
+.checkout .actions button { flex: 1; min-height: 2.5rem; font-size: .875rem; }
+/* While codes are being tried, Stop is the only action worth showing. */
+.checkout .actions:has(#stop-codes:not([hidden])) #try-codes { display: none; }
+
+/* Saved: one number, then the receipt. Colour only where the money is. */
+#checkout-savings { padding-top: .5rem; }
+.saved-hero { font-size: 1.375rem; font-weight: 600; line-height: 1.2; letter-spacing: -.02em; text-align: center; }
+.saved-hero strong { color: var(--green); font-weight: 700; font-variant-numeric: tabular-nums; }
+.receipt { display: grid; gap: .5rem; margin: 1rem 0 0; padding: .75rem 0; border-block: 1px solid var(--line); font-size: .8125rem; }
+.receipt div { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.receipt dt { color: var(--muted); }
+.receipt dd { display: inline-flex; align-items: center; gap: .375rem; min-width: 0; margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.receipt svg { flex: none; width: 1rem; height: 1rem; }
+#saved-code { font: 700 .8125rem/1.3 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .01em; }
+#saved-after { color: var(--green); font-weight: 700; }
+/* The receipt already says it; the sentence stays for screen readers. */
+#checkout-savings:not([hidden]) + #checkout-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Coupons: perforated tickets. The whole ticket is the copy button. */
+#coupons { display: grid; gap: .5rem; }
+.coupon { display: grid; }
+.coupon-ticket {
+  --stub: 4.5rem;
+  --notch: .4375rem;
+  --ticket-paper: var(--paper);
+  --ticket-stub: var(--peach-soft);
+  --ticket-accent: var(--peach-ink);
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--stub);
+  width: 100%;
+  min-height: 4.5rem;
+  padding: 0;
+  border-radius: .875rem;
+  background: none;
+  text-align: start;
+  filter: var(--ticket-edge);
+  transition: --ticket-paper .2s, --ticket-stub .2s, filter .2s, transform .1s ease-out;
 }
-.masthead, .coupon-top, .coupon-meta, .section-top, .account-row { justify-content: space-between; }
-.brand { gap: 7px; font: 750 24px/1 Georgia, serif; letter-spacing: -.055em; }
-.brand img { flex: none; }
-#basket-marker { color: #6b3d53; font-size: 11px; font-weight: 700; }
-#basket-marker::before { content: ""; display: inline-block; margin-right: 5px; width: 6px; height: 6px; border-radius: 50%; background: #a33738; vertical-align: 1px; }
-h1 { margin: 9px 0 2px; font-size: 23px; line-height: 1.12; letter-spacing: -.048em; overflow-wrap: anywhere; }
-h2 { margin: 0; font-size: 14px; font-weight: 750; letter-spacing: -.02em; }
-p { margin: 0; }
-#status { color: #69464e; font-size: 12px; }
-
-#account-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; align-items: center; padding: 9px 18px; border-bottom: 1px solid var(--line); background: #fffdf9; }
-.account-row { min-width: 0; }
-.account-row > div { min-width: 0; }
-#account-plan { display: inline-block; margin-bottom: 1px; font-size: 12px; font-weight: 800; }
-#account-detail { color: var(--muted); font-size: 11px; }
-#account-action { min-height: 31px; flex: none; }
-#account-refresh { color: #67477a; background: transparent; padding: 5px 0; border: 0; font-size: 10px; text-decoration: underline; text-underline-offset: 2px; }
-
-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin: 11px 16px 0; background: var(--lilac); border: 1px solid #e8dbef; border-radius: 12px; }
-nav button { display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid transparent; background: transparent; color: var(--muted); }
-nav button[aria-pressed="true"] { background: var(--white); color: var(--ink); border-color: #e8dfef; box-shadow: 0 1px 2px #38244814; }
-.tab-icon { display: inline-block; width: 14px; height: 11px; border: 1.5px solid currentColor; border-radius: 2px; position: relative; flex: none; }
-.ticket-icon::after { position: absolute; inset: 0 auto 0 6px; content: ""; border-left: 1px dashed currentColor; }
-.shop-icon { height: 10px; margin-top: 2px; border-radius: 0 0 2px 2px; }
-.shop-icon::after { position: absolute; content: ""; inset: -4px -3px auto; height: 4px; border: 1.5px solid currentColor; border-radius: 2px 2px 0 0; background: var(--lilac); }
-nav button[aria-pressed="true"] .shop-icon::after { background: var(--white); }
-
-main { padding: 12px 16px 9px; max-height: 420px; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: #cdbed3 transparent; }
-ol, ul { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
-li { padding: 12px; background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); }
-.coupon { border-inline-start: 4px solid #eac1d8; padding-inline-start: 11px; }
-.coupon[data-trial-state="applied"] { border-inline-start-color: #c2dcc4; }
-.coupon[data-trial-state="rejected"] { border-inline-start-color: #e8b8ad; }
-.code { color: #513b67; background: var(--lilac); border-radius: 7px; padding: 3px 7px; font: 750 18px/1.25 ui-monospace, monospace; letter-spacing: -.02em; overflow-wrap: anywhere; }
-.offer { margin-block: 8px; overflow-wrap: anywhere; font-size: 13px; }
+/* The paper sits on its own layer so the notches are real cut-outs and the focus ring stays whole. */
+.coupon-ticket::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(to right, var(--ticket-paper) calc(100% - var(--stub)), var(--ticket-stub) 0);
+  mask:
+    radial-gradient(circle at calc(100% - var(--stub)) 0, #0000 var(--notch), #000 calc(var(--notch) + .5px)) top / 100% 51% no-repeat,
+    radial-gradient(circle at calc(100% - var(--stub)) 100%, #0000 var(--notch), #000 calc(var(--notch) + .5px)) bottom / 100% 51% no-repeat;
+}
+.coupon-ticket:hover { filter: var(--ticket-lift); }
+.ticket-content { display: grid; align-content: center; gap: .1875rem; min-width: 0; padding: .75rem .875rem .75rem 1rem; transition: opacity .2s; }
+.code { font: 650 1.1875rem/1.2 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .01em; overflow-wrap: anywhere; transition: color .2s; }
+.offer { color: var(--muted); font-size: .8125rem; font-weight: 450; line-height: 1.35; overflow-wrap: anywhere; }
 .offer:empty { display: none; }
-.coupon-meta, footer, .section-top span, .offer-details { color: var(--muted); font-size: 11px; }
-.coupon-meta { flex-wrap: wrap; margin-block: 8px; }
-.sources { display: flex; flex-wrap: wrap; gap: 6px; }
-a { color: #6a4080; text-underline-offset: 3px; overflow-wrap: anywhere; }
-button, select { color: var(--ink); font: 700 12px/1.25 "Avenir Next", "Trebuchet MS", sans-serif; border-radius: 8px; }
-button { min-height: 34px; cursor: pointer; padding: 6px 10px; }
-button:focus-visible, a:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-button:disabled { cursor: wait; opacity: .62; }
-.primary { background: var(--coral); border: 1px solid #df917e; }
-.primary:not(:disabled):hover { background: #ffc0ad; }
-.secondary { background: var(--white); border: 1px solid #e0d1df; }
-.secondary:not(:disabled):hover { background: #f7eff8; }
-.votes { gap: 5px; }
-.votes button { min-height: 27px; font-size: 11px; padding-inline: 8px; }
-.votes [aria-pressed="true"] { color: #553271; background: #f0def9; border-color: #ba97cc; }
+.ticket-stub { position: relative; display: grid; place-content: center; justify-items: center; gap: .25rem; color: var(--ticket-accent); font-size: .6875rem; font-weight: 650; letter-spacing: .01em; transition: color .2s; }
+/* Perforation between the two notches */
+.ticket-stub::before { content: ""; position: absolute; inset: calc(var(--notch) + .3125rem) auto calc(var(--notch) + .3125rem) -1px; width: 2px; background: radial-gradient(circle, var(--line-strong) 1px, #0000 1.2px) center top / 2px 6px repeat-y; }
+.ticket-icon { display: grid; width: 1.25rem; height: 1.25rem; }
+.ticket-icon svg { grid-area: 1 / 1; }
+.icon-check { stroke-width: 2.2; opacity: 0; scale: .6; }
 
-.checkout-card { background: #edf5e9; border: 1px solid #d7e7d3; border-radius: var(--radius); padding: 12px; margin-bottom: 13px; }
-#checkout-status:not(:empty) { color: var(--green); font-size: 12px; }
-.checkout-card .actions:not(:has(button:not([hidden]))) { display: none; }
-.checkout-card .actions:has(button:not([hidden])) { margin-top: 7px; }
-#checkout-savings { color: #214f37; font: 750 27px/1.1 Georgia, serif; letter-spacing: -.045em; margin-bottom: 2px; }
-#checkout-progress { display: block; width: 100%; height: 8px; accent-color: #42835c; margin: 6px 0; }
-.trial-result { color: var(--muted); font-size: 11px; margin-top: 7px; }
-[data-trial-state="applied"] .trial-result { color: var(--green); }
-[data-trial-state="rejected"] .trial-result { color: var(--accent); }
-.section-top { margin-block: 2px 7px; }
-#freshness:not(:empty) { border-radius: 30px; padding: 3px 7px; background: var(--lilac); white-space: nowrap; }
-.empty { padding: 11px 12px; margin-bottom: 8px; color: var(--muted); background: #fffdf9; border: 1px dashed #ddc9dc; border-radius: 10px; font-size: 12px; }
-#scan-store { width: 100%; }
-.market-card { padding: 10px 11px; margin-bottom: 9px; border: 1px solid var(--line); background: #fffdf9; border-radius: var(--radius); }
-.market-card > label { display: inline-block; margin: 0 0 5px 1px; color: var(--muted); font-weight: 750; font-size: 11px; }
-.market-row select { flex: 1; min-width: 0; align-self: stretch; background: var(--white); padding: 6px 8px; border: 1px solid #e0d1df; }
-#alternatives-status:not(:empty) { margin-top: 9px; color: var(--muted); font-size: 12px; }
-#more-alternatives { margin-top: 10px; }
-#alternative-results h2 { margin: 11px 0 2px; }
-#alternative-results .variant { margin-bottom: 7px; font-size: 12px; color: var(--muted); }
-#alternative-results li { padding: 10px 11px; }
-#alternative-results a { font-weight: 750; }
-.retailer-link { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; text-decoration: none; }
-.retailer-name { min-width: 0; text-decoration: underline; }
-.retailer-price { flex: none; color: var(--ink); font-size: 17px; font-variant-numeric: tabular-nums; text-decoration: none; }
-.retailer-currency { margin-inline-start: 4px; color: var(--muted); font-size: 9px; }
-.retailer-title, .retailer-variant { margin-top: 2px; font-size: 12px; }
-.retailer-variant { color: var(--muted); font-size: 11px; }
-.offer-details { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.offer-label { padding: 2px 6px; border-radius: 30px; background: var(--lilac); color: #573e66; font-size: 10px; }
-.offer-label.positive { background: var(--mint); color: var(--green); }
-footer { margin: 1px 16px 0; padding: 7px 0 9px; border-top: 1px solid var(--line); }
+.coupon[data-trial-state="applied"] .coupon-ticket { --ticket-stub: var(--green-soft); --ticket-accent: var(--green); }
+.coupon[data-trial-state="applied"] .code { color: var(--green); }
+.coupon[data-trial-state="rejected"] .ticket-content { opacity: .55; }
+
+/* Copied: the stub turns solid green with a tick, and the code reads “Copied”. */
+.coupon .coupon-ticket[data-copied] { --ticket-stub: var(--green-solid); --ticket-accent: #fff; }
+.coupon .coupon-ticket[data-copied] .code { color: var(--green); }
+.coupon-ticket[data-copied] .icon-copy { opacity: 0; scale: .6; }
+.coupon-ticket[data-copied] .icon-check { opacity: 1; scale: 1; }
+.coupon-ticket[data-copied] .ticket-icon { translate: 0 .5rem; scale: 1.3; }
+.coupon-ticket[data-copied] .ticket-action { opacity: 0; }
+
+.trial-result { display: flex; align-items: center; gap: .375rem; margin: .4375rem .25rem 0; font-size: .75rem; font-weight: 600; }
+.coupon[data-trial-state="applied"] .trial-result { color: var(--green); }
+.coupon[data-trial-state="applied"] .trial-result::before { content: "✓" / ""; }
+.coupon[data-trial-state="rejected"] .trial-result { color: var(--red); }
+.coupon[data-trial-state="rejected"] .trial-result::before { content: "✕" / ""; }
+
+/* Reports, sources and votes stay one quiet line until asked for */
+.coupon-more { margin-inline: .25rem; color: var(--muted); font-size: .71875rem; }
+.coupon-more summary { display: inline-flex; align-items: center; gap: .375rem; min-height: 1.75rem; padding-inline: .125rem; border-radius: .375rem; cursor: pointer; list-style: none; }
+.coupon-more summary::-webkit-details-marker { display: none; }
+.coupon:is([data-trust="good"], [data-trust="mixed"]) summary::before { content: ""; width: .375rem; height: .375rem; border-radius: 50%; background: var(--green-solid); }
+.coupon[data-trust="mixed"] summary::before { background: var(--amber); }
+.coupon-more summary::after { content: ""; width: .75rem; height: .75rem; background: var(--chevron) center / contain no-repeat; }
+.coupon-more[open] summary::after { rotate: 180deg; }
+.coupon-more summary:hover { color: var(--ink); }
+.coupon-detail { display: grid; gap: .5rem; padding: .25rem .125rem .5rem; }
+.sources { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .375rem; }
+.sources:empty { display: none; }
+.sources a { padding: .125rem .5rem; border-radius: 99px; background: var(--fill); font-weight: 550; text-decoration: none; }
+.sources a:hover { background: var(--fill-strong); }
+.votes { display: flex; align-items: center; gap: .375rem; }
+.votes-label { margin-inline-end: .125rem; }
+.votes button { min-height: 1.625rem; padding: 0 .625rem; border-radius: 99px; font-size: .71875rem; }
+.votes .worked[aria-pressed="true"] { background: var(--green-soft); box-shadow: inset 0 0 0 1px var(--green-solid); color: var(--green); }
+.votes .failed[aria-pressed="true"] { background: var(--red-soft); box-shadow: inset 0 0 0 1px var(--red); color: var(--red); }
+
+/* Nothing to show yet: scan, retry, or no codes */
+.empty-state { display: grid; justify-items: center; gap: .75rem; padding: 1.25rem 1rem .5rem; text-align: center; }
+.empty-state:not(:has(> :is(p, button):not([hidden]))), [aria-busy="true"] > .empty-state { display: none; }
+.empty-art { width: 4.5rem; height: 2.75rem; fill: var(--paper); stroke: var(--peach); stroke-width: 1.5; stroke-dasharray: 3 3.5; }
+.empty-art-tear { stroke-dasharray: .1 4; }
+.empty { color: var(--muted); font-size: .8125rem; text-wrap: balance; }
+.empty-state button { min-width: 12rem; min-height: 2.5rem; }
+#coupon-view[aria-busy="true"] #coupons:empty::before, #coupon-view[aria-busy="true"] #coupons:empty::after,
+#alternatives[aria-busy="true"] #alternative-results::after { content: ""; display: block; height: 4.5rem; border-radius: .875rem; background: var(--fill); }
+#alternatives[aria-busy="true"] #alternative-results::after { margin-top: 1rem; }
+
+/* Other retailers */
+.market-row { display: flex; gap: .5rem; }
+.market-row select { flex: 1; min-width: 0; min-height: 2.25rem; padding: 0 2rem 0 .875rem; appearance: none; border: 0; border-radius: 99px; background: var(--chevron) right .75rem center / .75rem no-repeat; box-shadow: inset 0 0 0 1px var(--line-strong); text-overflow: ellipsis; }
+#alternatives-status:not(:empty) { margin-top: .625rem; color: var(--muted); font-size: .75rem; }
+#more-alternatives { width: 100%; margin-top: .75rem; }
+#alternative-results > section { margin-top: 1.125rem; }
+#alternative-results h2 { font-size: .875rem; font-weight: 650; line-height: 1.3; letter-spacing: -.005em; overflow-wrap: anywhere; }
+#alternative-results .variant { color: var(--muted); font-size: .75rem; }
+#alternative-results .empty { margin-top: .25rem; font-size: .75rem; }
+#alternative-results ul { margin-top: .5rem; border-block: 1px solid var(--line); }
+#alternative-results ul:empty { display: none; }
+.retailer-offer { position: relative; margin-inline: -.5rem; padding: .6875rem .5rem .75rem; border-radius: .625rem; }
+.retailer-offer + .retailer-offer::before { content: ""; position: absolute; inset: 0 .5rem auto; border-top: 1px solid var(--line); }
+.retailer-offer:hover { background: var(--fill); }
+.retailer-offer:has(.retailer-link:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
+.retailer-link { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; color: inherit; text-decoration: none; }
+.retailer-link:focus-visible { outline: none; }
+/* The link stretches over the row, so the whole offer opens the retailer. */
+.retailer-link::after { content: ""; position: absolute; inset: 0; }
+.retailer-name { min-width: 0; font-size: .8125rem; font-weight: 650; overflow-wrap: anywhere; }
+.retailer-name::after { content: "↗" / ""; margin-inline-start: .25rem; color: var(--faint); font-weight: 500; }
+.retailer-price { flex: none; font-size: 1.0625rem; font-weight: 700; line-height: 1.2; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.retailer-currency { margin-inline-start: .1875rem; color: var(--faint); font-size: .625rem; font-weight: 600; letter-spacing: .03em; }
+.retailer-title { margin-top: .0625rem; color: var(--muted); font-size: .75rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.retailer-variant { margin-top: .0625rem; color: var(--muted); font-size: .71875rem; }
+.offer-details { display: flex; flex-wrap: wrap; gap: .125rem .75rem; margin-top: .375rem; color: var(--muted); font-size: .6875rem; font-weight: 550; }
+.offer-label { display: inline-flex; align-items: center; gap: .3125rem; }
+.offer-label::before { content: ""; width: .375rem; height: .375rem; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--faint); }
+.offer-label.positive { color: var(--green); }
+.offer-label.positive::before { background: var(--green-solid); box-shadow: none; }
+.offer-label.caution { color: var(--amber-ink); }
+.offer-label.caution::before { background: var(--amber); box-shadow: none; }
+
+/* Account: a quiet plan line once signed in, a sign-in card before */
+footer { display: grid; gap: .25rem; padding: .5rem 1rem .5625rem; border-top: 1px solid var(--line); }
+#account-panel { display: flex; align-items: center; gap: .125rem; min-height: 2rem; }
+.account-text { flex: 1; min-width: 0; display: flex; align-items: center; gap: .5rem; color: var(--muted); font-size: .75rem; }
+#account-plan { flex: none; padding: .0625rem .4375rem; border-radius: 99px; background: var(--fill-strong); color: var(--ink); font-size: .6875rem; font-weight: 700; letter-spacing: .02em; }
+#account-plan:empty { display: none; }
+[data-account="pro"] #account-plan { background: var(--primary); color: var(--on-primary); }
+#account-action.primary { min-height: 2rem; margin-inline-start: .25rem; }
+.attribution { color: var(--faint); font-size: .65625rem; }
+[data-account="signedout"] main { display: none; }
+[data-account="signedout"] footer { gap: .75rem; padding-top: 0; border-top: 0; }
+[data-account="signedout"] #account-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: .375rem; }
+[data-account="signedout"] #account-action { grid-column: 1 / -1; min-height: 2.75rem; margin: 0; font-size: .9375rem; }
+
+@media (prefers-reduced-motion: no-preference) {
+  button:not(:disabled):active { transform: scale(.97); }
+  .coupon-ticket:not(:disabled):active { transform: scale(.985); }
+  nav::before { transition: transform .3s var(--ease-out); }
+  .ticket-icon, .ticket-icon svg, .ticket-action { transition: opacity .15s, scale .25s var(--ease-out), translate .25s var(--ease-out); }
+  .coupon-more summary::after { transition: rotate .2s var(--ease-out); }
+  /* A view arrives from the side its tab sits on. */
+  #views:not([hidden]) ~ main > section { animation: arrive .22s var(--ease-out); }
+  #views:not([hidden]) ~ main > #alternatives { --from: .5rem; }
+  #account-refresh:disabled svg { animation: turn .8s linear infinite; }
+  #coupons:empty::before, #coupons:empty::after, #alternative-results::after { animation: wait .9s ease-in-out infinite alternate; }
+  #coupons:empty::after { animation-delay: .2s; }
+}
+@keyframes arrive { from { opacity: 0; translate: var(--from, -.5rem) 0; } }
+@keyframes turn { to { rotate: 1turn; } }
+@keyframes wait { to { opacity: .45; } }
+
+@media (prefers-contrast: more) {
+  :root { --line: var(--line-strong); --muted: var(--ink); --faint: var(--ink); }
+  .coupon-ticket { outline: 1px solid var(--ink); outline-offset: -1px; }
+}
+@media (forced-colors: active) {
+  .coupon-ticket, nav button[aria-pressed="true"] { outline: 1px solid ButtonText; outline-offset: -1px; }
+  .coupon-ticket::before, nav::before { display: none; }
+  .ticket-stub { border-inline-start: 1px dashed ButtonText; }
+}

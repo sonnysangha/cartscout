@@ -30,38 +30,25 @@ let lastCacheOnly;
 let checkoutCodes = [];
 let checkoutResult;
 let checkoutPoll;
+let scanExhausted = false;
 
-const accountPanel = document.createElement('section');
-accountPanel.id = 'account-panel';
-accountPanel.setAttribute('aria-label', 'CartScout account');
-accountPanel.innerHTML = `
-  <div class="account-row">
-    <div>
-      <strong id="account-plan">Your account</strong>
-      <p id="account-detail" role="status">Checking sign-in…</p>
-    </div>
-    <button id="account-action" class="primary" hidden>Sign in</button>
-  </div>
-  <button id="account-refresh" class="account-link" hidden>Refresh plan</button>
-`;
-document.querySelector('header').after(accountPanel);
 const accountAction = element('account-action');
 const accountRefresh = element('account-refresh');
-const scanButton = document.createElement('button');
-scanButton.id = 'scan-store';
-scanButton.className = 'primary';
-scanButton.textContent = 'Scan this store';
-scanButton.hidden = true;
-retry.before(scanButton);
+const scanButton = element('scan-store');
 
 function renderAccount(next) {
   account = next;
   const pro = account?.plan === 'pro';
-  element('account-plan').textContent = account ? (pro ? 'Pro' : 'Free') : 'Your account';
-  element('account-detail').textContent = !account ? 'Sign in to find coupon codes.'
-    : pro ? 'Shared coupon cache unlocked'
-    : `${account.scans?.remaining ?? 0} of ${account.scans?.limit ?? 5} site scans left this week`;
-  accountAction.textContent = !account ? 'Sign in' : pro ? 'Manage plan' : 'Upgrade to Pro';
+  // The stylesheet lays the account out per state: a sign-in card, or a quiet plan line.
+  document.body.dataset.account = !account ? 'signedout' : pro ? 'pro' : 'free';
+  element('account-plan').textContent = account ? (pro ? 'Pro' : 'Free') : '';
+  element('account-detail').textContent = !account ? 'Not signed in'
+    : pro ? 'Shared cache unlocked'
+    : `${account.scans?.remaining ?? 0} of ${account.scans?.limit ?? 5} weekly scans left`;
+  // One salient call to action per state: signing in, or upgrading once scans run out.
+  const salient = !account || (!pro && scanExhausted);
+  accountAction.textContent = !account ? 'Sign in' : pro ? 'Manage plan' : salient ? 'Upgrade to Pro' : 'Upgrade';
+  accountAction.className = salient ? 'primary' : 'quiet';
   accountAction.hidden = false;
   accountRefresh.hidden = !accountReady;
 }
@@ -117,13 +104,16 @@ function renderTrialResults() {
 function renderCoupons(data, savedReport) {
   checkoutCodes = data.coupons.map(({ code }) => code);
   const count = checkoutCodes.length;
-  const label = count === 1 ? '1 candidate code' : `${count} candidate codes`;
-  const context = data.source === 'stale' ? 'Showing previously discovered codes.'
-    : data.partial ? 'Some coupon sources couldn’t be checked.' : '';
-  status.textContent = [savedReport ? 'Report saved.' : '', count ? label : 'No public codes found.', context]
+  const label = count === 1 ? '1 possible code' : `${count} possible codes`;
+  const freshness = data.source === 'cache' ? (account?.plan === 'pro' ? 'from the shared cache' : 'from your saved scan')
+    : data.source === 'stale' ? 'earlier results' : 'checked just now';
+  const context = data.partial ? 'Some coupon sources couldn’t be checked.' : '';
+  status.textContent = [savedReport ? 'Report saved.' : '', count ? `${label} · ${freshness}.` : 'No public codes found.', context]
     .filter(Boolean).join(' ');
-  element('coupon-summary').hidden = count === 0;
-  element('freshness').textContent = data.source === 'cache' ? (account?.plan === 'pro' ? 'Shared cache' : 'Your cached scan') : data.source === 'stale' ? 'Earlier results' : 'Checked just now';
+  if (scanExhausted) {
+    scanExhausted = false;
+    renderAccount(account);
+  }
   const empty = element('coupon-empty');
   empty.hidden = count !== 0;
   empty.textContent = 'CartScout looks for full codes published by the shop or a coupon source.';
@@ -134,23 +124,47 @@ function renderCoupons(data, savedReport) {
   for (const coupon of data.coupons) {
     const row = element('coupon').content.firstElementChild.cloneNode(true);
     row.dataset.code = coupon.code;
-    row.querySelector('.code').textContent = coupon.code;
-    row.querySelector('.offer').textContent = coupon.offer;
-    row.querySelector('.counts').textContent = coupon.worked || coupon.failed
-      ? `${coupon.worked} worked · ${coupon.failed} failed` : 'No recent reports';
+    row.dataset.trust = !(coupon.worked || coupon.failed) ? 'none' : coupon.worked > coupon.failed ? 'good' : 'mixed';
+    const code = row.querySelector('.code');
+    code.textContent = coupon.code;
+    const offer = row.querySelector('.offer');
+    offer.id = `coupon-offer-${list.children.length}`;
+    offer.textContent = coupon.offer;
+    const counts = row.querySelector('.counts');
+    counts.textContent = coupon.worked || coupon.failed
+      ? `${coupon.worked} worked · ${coupon.failed} failed` : 'No reports yet';
+    counts.append(Object.assign(document.createElement('span'), {
+      className: 'visually-hidden', textContent: ' · sources and feedback',
+    }));
+    // Keep the disclosure open once someone has reported, so their vote stays visible and focusable.
+    row.querySelector('.coupon-more').open = coupon.myReport === 0 || coupon.myReport === 1;
     const sources = row.querySelector('.sources');
+    if (coupon.sources.length) sources.append('Found on');
     for (const url of coupon.sources) {
       sources.append(externalLink(url, new URL(url).hostname.replace(/^www\./, '')));
     }
 
-    const copy = row.querySelector('.copy');
+    const copy = row.querySelector('.coupon-ticket');
+    const feedback = row.querySelector('.copy-feedback');
+    let copyTimeout;
+    copy.setAttribute('aria-label', `Copy ${coupon.code}`);
+    if (offer.textContent) copy.setAttribute('aria-describedby', offer.id);
     copy.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(coupon.code);
-        copy.textContent = 'Copied';
       } catch {
-        status.textContent = 'Couldn’t copy. You can select the code above.';
+        status.textContent = 'Couldn’t copy. Try again.';
+        return;
       }
+      code.textContent = 'Copied';
+      copy.setAttribute('data-copied', '');
+      feedback.textContent = `Copied ${coupon.code} to the clipboard.`;
+      clearTimeout(copyTimeout);
+      copyTimeout = setTimeout(() => {
+        code.textContent = coupon.code;
+        copy.removeAttribute('data-copied');
+        feedback.textContent = '';
+      }, 1600);
     });
 
     for (const [selector, worked] of [['.worked', true], ['.failed', false]]) {
@@ -178,6 +192,8 @@ async function loadCoupons(cacheOnly = account?.plan === 'free') {
   lastCacheOnly = cacheOnly;
   retry.hidden = scanButton.hidden = true;
   status.textContent = cacheOnly ? 'Checking your saved codes…' : 'Looking for coupon codes…';
+  const view = element('coupon-view');
+  view.setAttribute('aria-busy', 'true');
   try {
     renderCoupons(await api('/v1/coupons', { cacheOnly }));
   } catch (error) {
@@ -187,13 +203,17 @@ async function loadCoupons(cacheOnly = account?.plan === 'free') {
       status.textContent = exhausted ? 'Weekly scan limit reached' : 'Ready to scan this store';
       empty.textContent = exhausted
         ? 'Your saved scans are still available. Upgrade to use the shared cache.'
-        : 'A new store uses one weekly scan. Its results are saved privately to your account.';
+        : 'Scanning uses one weekly scan. Results are saved privately to your account.';
       empty.hidden = false;
       scanButton.hidden = exhausted;
+      scanExhausted = exhausted;
+      renderAccount(account);
     } else {
       status.textContent = error.message;
       retry.hidden = false;
     }
+  } finally {
+    view.removeAttribute('aria-busy');
   }
 }
 
@@ -215,7 +235,10 @@ function renderCheckout(result) {
   }
   checkoutSavings.hidden = result.state !== 'saved';
   if (result.state === 'saved') {
-    checkoutSavings.textContent = `Saved ${pounds.format((result.before - result.after) / 100)}`;
+    element('saved-amount').textContent = pounds.format((result.before - result.after) / 100);
+    element('saved-code').textContent = result.code;
+    element('saved-before').textContent = pounds.format(result.before / 100);
+    element('saved-after').textContent = pounds.format(result.after / 100);
   }
   const messages = {
     running: result.stopRequested ? 'Finishing the current attempt…'
@@ -314,6 +337,7 @@ async function checkAlternativeBatch(startNewSearch) {
   const country = marketInput.value;
   const [market] = markets[country];
   alternativesStatus.textContent = `Checking retailers in ${market}…`;
+  element('alternatives').setAttribute('aria-busy', 'true');
   try {
     if (startNewSearch) {
       offerResults.replaceChildren();
@@ -341,6 +365,7 @@ async function checkAlternativeBatch(startNewSearch) {
   } catch (error) {
     alternativesStatus.textContent = error.message;
   } finally {
+    element('alternatives').removeAttribute('aria-busy');
     findAlternatives.disabled = marketInput.disabled = moreAlternatives.disabled = false;
   }
 }
@@ -361,7 +386,8 @@ function clearShoppingData() {
   checkout.hidden = true;
   list.replaceChildren();
   scanButton.hidden = retry.hidden = true;
-  element('coupon-summary').hidden = element('coupon-empty').hidden = true;
+  element('coupon-empty').hidden = true;
+  scanExhausted = false;
   element('views').hidden = element('basket-marker').hidden = true;
   alternativeSearch = undefined;
   offerResults.replaceChildren();

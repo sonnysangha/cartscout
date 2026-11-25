@@ -4,6 +4,8 @@ const matchLabels = {
   unconfirmed: 'Variant unconfirmed',
 };
 
+const matchTones = { exact: 'positive', different_variant: 'caution' };
+
 function withText(tag, className, text) {
   const element = document.createElement(tag);
   element.className = className;
@@ -36,7 +38,7 @@ export function createRetailerOffer(offer) {
   const details = document.createElement('p');
   details.className = 'offer-details';
   details.append(
-    withText('span', offer.match === 'exact' ? 'offer-label positive' : 'offer-label', matchLabels[offer.match] ?? matchLabels.unconfirmed),
+    withText('span', `offer-label ${matchTones[offer.match] ?? ''}`.trim(), matchLabels[offer.match] ?? matchLabels.unconfirmed),
     withText('span', inStock ? 'offer-label positive' : 'offer-label', inStock ? 'Listed in stock' : 'Stock unconfirmed'),
   );
   row.append(details);
