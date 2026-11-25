@@ -3,42 +3,67 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>CartScout Coupons</title>
+  <title>CartScout</title>
   <link rel="stylesheet" href="popup.css">
   <script type="module" src="popup.js"></script>
 </head>
 <body>
   <header>
-    <div class="brand"><span aria-hidden="true">%</span> CartScout</div>
-    <h1 id="merchant">Coupon codes</h1>
+    <div class="masthead">
+      <div class="brand"><img src="icons/icon-32.png" width="26" height="26" alt="">CartScout</div>
+      <span id="basket-marker" hidden>In your basket</span>
+    </div>
+    <h1 id="merchant">Find savings</h1>
     <p id="status" role="status">Reading the current shop…</p>
   </header>
+
+  <nav id="views" aria-label="Shopping tools" hidden>
+    <button id="show-coupons" aria-controls="coupon-view" aria-pressed="true">Coupon codes</button>
+    <button id="show-alternatives" aria-controls="alternatives" aria-pressed="false">Other retailers</button>
+  </nav>
+
   <main>
-    <section id="checkout" aria-label="Try checkout codes" hidden>
-      <button id="try-codes" class="copy">Try codes at checkout</button>
-      <p id="checkout-status" role="status"></p>
+    <section id="coupon-view" aria-label="Coupon codes">
+      <section id="checkout" class="checkout-card" aria-label="Try checkout codes" hidden>
+        <div id="checkout-savings" hidden></div>
+        <p id="checkout-status" role="status"></p>
+        <progress id="checkout-progress" aria-label="Checkout codes tried" hidden></progress>
+        <div class="actions">
+          <button id="try-codes" class="primary">Try codes at checkout</button>
+          <button id="stop-codes" class="secondary" hidden>Stop after this code</button>
+        </div>
+      </section>
+      <div id="coupon-summary" class="section-top" hidden>
+        <h2>Available codes</h2>
+        <span id="freshness"></span>
+      </div>
+      <ol id="coupons" aria-label="Available coupon codes"></ol>
+      <p id="coupon-empty" class="empty" hidden></p>
+      <button id="retry" class="secondary" hidden>Try again</button>
     </section>
+
     <section id="alternatives" aria-label="Find other retailers" hidden>
+      <label for="market">Shop in</label>
       <div class="market-row">
-        <label for="market">Shop in</label>
         <select id="market"></select>
-        <button id="find-alternatives" class="copy">Find alternatives</button>
+        <button id="find-alternatives" class="primary">Find alternatives</button>
       </div>
       <p id="alternatives-status" role="status"></p>
       <div id="alternative-results"></div>
+      <button id="more-alternatives" class="secondary" hidden>Check more basket products</button>
     </section>
-    <ol id="coupons" aria-label="Coupon codes"></ol>
-    <button id="retry" class="retry" hidden>Try again</button>
   </main>
-  <footer>Try a code at checkout, then share whether it worked.</footer>
+
+  <footer>Search and product data by Oxylabs</footer>
   <template id="coupon">
-    <li>
-      <div class="coupon-top"><strong class="code"></strong><button class="copy">Copy code</button></div>
+    <li class="coupon">
+      <div class="coupon-top"><strong class="code"></strong><button class="copy secondary">Copy code</button></div>
       <p class="offer"></p>
-      <div class="coupon-meta"><span class="counts"></span><a class="source" target="_blank" rel="noreferrer">Source</a></div>
+      <p class="trial-result" hidden></p>
+      <div class="coupon-meta"><span class="counts"></span><span class="sources"></span></div>
       <div class="votes" aria-label="Did this code work?">
-        <button class="worked" aria-pressed="false">Worked</button>
-        <button class="failed" aria-pressed="false">Didn’t work</button>
+        <button class="worked secondary" aria-pressed="false">Worked</button>
+        <button class="failed secondary" aria-pressed="false">Didn’t work</button>
       </div>
     </li>
   </template>

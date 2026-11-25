@@ -2,18 +2,30 @@ import { API_ORIGIN } from './config.js';
 import { readMyproteinBasket, runMyproteinCoupons } from './myprotein.js';
 import { basketLimit, markets, suggestMarket } from './markets.js';
 
-const status = document.querySelector('#status');
-const list = document.querySelector('#coupons');
-const retry = document.querySelector('#retry');
-const template = document.querySelector('#coupon');
-const checkout = document.querySelector('#checkout');
-const tryCodes = document.querySelector('#try-codes');
-const checkoutStatus = document.querySelector('#checkout-status');
+const element = (id) => document.getElementById(id);
+const status = element('status');
+const list = element('coupons');
+const retry = element('retry');
+const checkout = element('checkout');
+const tryCodes = element('try-codes');
+const stopCodes = element('stop-codes');
+const progress = element('checkout-progress');
+const checkoutStatus = element('checkout-status');
+const checkoutSavings = element('checkout-savings');
+const marketInput = element('market');
+const findAlternatives = element('find-alternatives');
+const alternativesStatus = element('alternatives-status');
+const offerResults = element('alternative-results');
+const moreAlternatives = element('more-alternatives');
+let alternativeSearch;
 const pounds = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
-let basketTab;
-let checkoutCodes = [];
+
 let merchant;
+let basketTab;
 let token;
+let checkoutCodes = [];
+let checkoutResult;
+let checkoutPoll;
 
 async function installationToken() {
   return navigator.locks.request('cartscout-installation', async () => {
@@ -43,27 +55,54 @@ async function api(route, fields) {
   return data;
 }
 
-function render(data, savedReport) {
-  const label = data.coupons.length === 1 ? '1 candidate code' : `${data.coupons.length} candidate codes`;
-  const context = data.source === 'stale' ? 'Refresh unavailable. Showing previously found codes.'
-    : data.partial ? 'Some coupon sources could not be checked.' : '';
-  status.textContent = [
-    savedReport ? 'Report saved.' : '',
-    data.coupons.length ? label : 'No codes found for this shop.',
-    context,
-  ].filter(Boolean).join(' ');
+function externalLink(url, label) {
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noreferrer';
+  link.textContent = label;
+  return link;
+}
+
+function renderTrialResults() {
+  for (const row of list.children) {
+    const result = row.querySelector('.trial-result');
+    const code = row.dataset.code;
+    const applied = ['saved', 'accepted'].includes(checkoutResult?.state) && checkoutResult.code === code;
+    const rejected = checkoutResult?.rejected?.includes(code);
+    result.textContent = applied ? 'Applied to this basket' : rejected ? 'Rejected for this basket' : '';
+    result.hidden = !applied && !rejected;
+  }
+}
+
+function renderCoupons(data, savedReport) {
   checkoutCodes = data.coupons.map(({ code }) => code);
-  checkout.hidden = !basketTab || !checkoutCodes.length;
+  const count = checkoutCodes.length;
+  const label = count === 1 ? '1 candidate code' : `${count} candidate codes`;
+  const context = data.source === 'stale' ? 'Showing previously discovered codes.'
+    : data.partial ? 'Some coupon sources couldn’t be checked.' : '';
+  status.textContent = [savedReport ? 'Report saved.' : '', count ? label : 'No public codes found.', context]
+    .filter(Boolean).join(' ');
+  element('coupon-summary').hidden = count === 0;
+  element('freshness').textContent = data.source === 'cache' ? 'Shared cache' : data.source === 'stale' ? 'Earlier results' : 'Checked just now';
+  const empty = element('coupon-empty');
+  empty.hidden = count !== 0;
+  empty.textContent = 'CartScout looks for full codes published by the shop or a coupon source.';
+  checkout.hidden = !basketTab || (!count && !checkoutResult);
+  if (checkoutResult?.state !== 'running') tryCodes.disabled = !count;
   list.replaceChildren();
+
   for (const coupon of data.coupons) {
-    const row = template.content.firstElementChild.cloneNode(true);
+    const row = element('coupon').content.firstElementChild.cloneNode(true);
+    row.dataset.code = coupon.code;
     row.querySelector('.code').textContent = coupon.code;
     row.querySelector('.offer').textContent = coupon.offer;
     row.querySelector('.counts').textContent = coupon.worked || coupon.failed
       ? `${coupon.worked} worked · ${coupon.failed} failed` : 'No recent reports';
-    const source = row.querySelector('.source');
-    if (coupon.sources[0]) source.href = coupon.sources[0];
-    else source.hidden = true;
+    const sources = row.querySelector('.sources');
+    for (const url of coupon.sources) {
+      sources.append(externalLink(url, new URL(url).hostname.replace(/^www\./, '')));
+    }
 
     const copy = row.querySelector('.copy');
     copy.addEventListener('click', async () => {
@@ -75,94 +114,117 @@ function render(data, savedReport) {
       }
     });
 
-    const votes = [row.querySelector('.worked'), row.querySelector('.failed')];
-    votes.forEach((button, index) => {
-      const worked = index === 0;
+    for (const [selector, worked] of [['.worked', true], ['.failed', false]]) {
+      const button = row.querySelector(selector);
       button.setAttribute('aria-pressed', String(coupon.myReport === Number(worked)));
       button.addEventListener('click', async () => {
-        const allVotes = list.querySelectorAll('.votes button');
-        allVotes.forEach((vote) => { vote.disabled = true; });
+        const votes = list.querySelectorAll('.votes button');
+        votes.forEach((vote) => { vote.disabled = true; });
         try {
-          render(await api('/v1/reports', { code: coupon.code, worked }), true);
-          const refreshedRow = Array.from(list.children).find((item) => item.querySelector('.code').textContent === coupon.code);
-          refreshedRow?.querySelector(worked ? '.worked' : '.failed')?.focus();
+          renderCoupons(await api('/v1/reports', { code: coupon.code, worked }), true);
+          const refreshed = [...list.children].find((item) => item.dataset.code === coupon.code);
+          refreshed?.querySelector(selector)?.focus();
         } catch (error) {
           status.textContent = error.message;
-          allVotes.forEach((vote) => { vote.disabled = false; });
+          votes.forEach((vote) => { vote.disabled = false; });
         }
       });
-    });
+    }
     list.append(row);
   }
+  renderTrialResults();
 }
 
 async function loadCoupons() {
   retry.hidden = true;
   status.textContent = 'Looking for coupon codes…';
   try {
-    render(await api('/v1/coupons'));
+    renderCoupons(await api('/v1/coupons'));
   } catch (error) {
     status.textContent = error.message;
     retry.hidden = false;
   }
 }
 
-async function checkoutTrial(codes) {
-  const [injection] = await chrome.scripting.executeScript({
-    target: { tabId: basketTab }, func: runMyproteinCoupons, args: [codes],
-  });
-  return injection?.result;
-}
-
-async function showCheckout(result) {
-  tryCodes.disabled = result?.state === 'running';
+function renderCheckout(result) {
+  if (!result || result.state === 'idle') return;
+  checkoutResult = result;
+  checkout.hidden = false;
+  const running = result.state === 'running';
+  tryCodes.disabled = running || !checkoutCodes.length;
+  tryCodes.hidden = ['saved', 'accepted', 'alreadyApplied'].includes(result.state);
+  progress.hidden = !running;
+  stopCodes.hidden = !running;
+  stopCodes.disabled = !!result.stopRequested;
+  if (running) {
+    progress.max = result.total;
+    progress.value = result.attempted;
+  }
+  checkoutSavings.hidden = result.state !== 'saved';
+  if (result.state === 'saved') {
+    checkoutSavings.textContent = `Saved ${pounds.format((result.before - result.after) / 100)}`;
+  }
   const messages = {
-    idle: '',
-    running: `Trying checkout codes… ${result?.attempted ?? 0} of ${result?.total ?? 0}`,
-    saved: `${result?.code} applied. Basket subtotal fell from ${pounds.format(result?.before / 100)} to ${pounds.format(result?.after / 100)}.`,
-    noMatch: `Myprotein rejected all ${result?.attempted} attempted codes for this basket.`,
-    accepted: `Myprotein accepted ${result?.code}. CartScout couldn’t confirm a lower subtotal.`,
+    running: result.stopRequested ? 'Finishing the current attempt…'
+      : `Trying code ${result.attempted} of ${result.total}${result.code ? ` · ${result.code}` : ''}`,
+    saved: `${result.code} applied · ${pounds.format(result.before / 100)} → ${pounds.format(result.after / 100)}`,
+    noMatch: `Myprotein rejected all ${result.attempted} attempted codes for this basket.`,
+    accepted: `Myprotein accepted ${result.code}. A lower subtotal couldn’t be confirmed.`,
     alreadyApplied: 'Your basket already has a promo code applied.',
     inputOccupied: 'Clear the discount field before trying codes.',
-    unavailable: 'Open a Myprotein UK basket with an item and a discount field.',
+    unavailable: 'Add an item to your Myprotein basket to try codes.',
     unsupported: 'Open your Myprotein UK basket to try codes.',
     changed: 'The basket changed. Check it before trying again.',
-    unknown: `Myprotein’s response to ${result?.code || 'the code'} was unclear. Check your basket before trying again.`,
+    stopped: 'Stopped after the current attempt.',
+    unknown: `Myprotein’s response to ${result.code || 'the code'} was unclear. Check your basket before trying again.`,
   };
-  checkoutStatus.textContent = messages[result?.state] ?? messages.unavailable;
-  if (result?.state === 'running') {
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    await showCheckout(await checkoutTrial(null));
-  }
+  checkoutStatus.textContent = messages[result.state] ?? '';
+  renderTrialResults();
 }
 
-async function refreshCheckout(codes) {
+async function refreshCheckout(command = null) {
+  clearTimeout(checkoutPoll);
   try {
-    await showCheckout(await checkoutTrial(codes));
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId: basketTab }, func: runMyproteinCoupons, args: [command, true],
+    });
+    renderCheckout(injection?.result);
+    if (injection?.result?.state === 'running') checkoutPoll = setTimeout(refreshCheckout, 300);
   } catch {
-    tryCodes.disabled = false;
+    tryCodes.disabled = !checkoutCodes.length;
+    stopCodes.hidden = progress.hidden = true;
     checkoutStatus.textContent = 'Couldn’t read the basket. Reopen CartScout and try again.';
   }
 }
 
 tryCodes.addEventListener('click', async () => {
   tryCodes.disabled = true;
-  checkoutStatus.textContent = 'Trying checkout codes…';
+  checkoutStatus.textContent = 'Preparing to try codes…';
   await refreshCheckout(checkoutCodes);
 });
+stopCodes.addEventListener('click', async () => {
+  stopCodes.disabled = true;
+  await refreshCheckout('stop');
+});
+retry.addEventListener('click', loadCoupons);
 
-const alternatives = document.querySelector('#alternatives');
-const marketsInput = document.querySelector('#market');
-const findAlternatives = document.querySelector('#find-alternatives');
-const alternativesStatus = document.querySelector('#alternatives-status');
-const offerResults = document.querySelector('#alternative-results');
+function switchView(showAlternatives) {
+  element('show-coupons').setAttribute('aria-pressed', String(!showAlternatives));
+  element('show-alternatives').setAttribute('aria-pressed', String(showAlternatives));
+  element('coupon-view').hidden = showAlternatives;
+  element('alternatives').hidden = !showAlternatives;
+}
 
-async function showMarketPicker() {
+element('show-coupons').addEventListener('click', () => switchView(false));
+element('show-alternatives').addEventListener('click', () => switchView(true));
+
+async function activateBasketTools() {
   const { shoppingCountry } = await chrome.storage.local.get('shoppingCountry');
   const suggested = suggestMarket(Intl.DateTimeFormat().resolvedOptions().timeZone, navigator.languages);
-  for (const [code, [label]] of Object.entries(markets)) marketsInput.add(new Option(label, code));
-  marketsInput.value = Object.hasOwn(markets, shoppingCountry) ? shoppingCountry : suggested;
-  alternatives.hidden = false;
+  for (const [code, [label]] of Object.entries(markets)) marketInput.add(new Option(label, code));
+  marketInput.value = Object.hasOwn(markets, shoppingCountry) ? shoppingCountry : suggested;
+  element('views').hidden = element('basket-marker').hidden = false;
+  await refreshCheckout();
 }
 
 function renderOffers(results) {
@@ -170,32 +232,37 @@ function renderOffers(results) {
   for (const { name, variant, offers, partial, error } of results) {
     const group = document.createElement('section');
     const heading = document.createElement('h2');
-    heading.textContent = [name, variant].filter(Boolean).join(' · ');
+    heading.textContent = name;
     group.append(heading);
+    if (variant) {
+      const requested = document.createElement('p');
+      requested.className = 'variant';
+      requested.textContent = variant;
+      group.append(requested);
+    }
     if (!offers.length || partial || error) {
       const note = document.createElement('p');
+      note.className = 'empty';
       note.textContent = error ?? (!offers.length
         ? 'No priced retailer offers found in this market.'
-        : 'Some retailer pages could not be checked.');
+        : 'Some retailer pages couldn’t be checked.');
       group.append(note);
     }
     const rows = document.createElement('ul');
     for (const offer of offers) {
       const row = document.createElement('li');
-      const link = document.createElement('a');
-      link.href = offer.url;
-      link.target = '_blank';
-      link.rel = 'noreferrer';
       const price = new Intl.NumberFormat(navigator.language, {
         style: 'currency', currency: offer.currency, currencyDisplay: 'code',
       }).format(offer.price);
-      link.textContent = `${offer.retailer} · ${price}`;
+      const title = document.createElement('p');
+      title.textContent = offer.title;
       const detail = document.createElement('p');
+      detail.className = 'offer-details';
       detail.textContent = [
-        matchLabel[offer.match], offer.variant, offer.availability === 'in_stock'
-          ? 'Listed in stock' : 'Stock unconfirmed',
+        matchLabel[offer.match], offer.variant,
+        offer.availability === 'in_stock' ? 'Listed in stock' : 'Stock unconfirmed',
       ].filter(Boolean).join(' · ');
-      row.append(link, detail);
+      row.append(externalLink(offer.url, `${offer.retailer} · ${price}`), title, detail);
       rows.append(row);
     }
     group.append(rows);
@@ -203,43 +270,50 @@ function renderOffers(results) {
   }
 }
 
-findAlternatives.addEventListener('click', async () => {
-  offerResults.replaceChildren();
-  findAlternatives.disabled = true;
-  marketsInput.disabled = true;
-  const country = marketsInput.value;
+async function checkAlternativeBatch(startNewSearch) {
+  findAlternatives.disabled = marketInput.disabled = moreAlternatives.disabled = true;
+  const country = marketInput.value;
   const [market] = markets[country];
   alternativesStatus.textContent = `Checking retailers in ${market}…`;
   try {
-    await chrome.storage.local.set({ shoppingCountry: country });
-    const [injection] = await chrome.scripting.executeScript({
-      target: { tabId: basketTab }, func: readMyproteinBasket,
-    });
-    const items = injection?.result ?? [];
-    if (!items.length) {
-      alternativesStatus.textContent = 'Add a product to your Myprotein basket to compare retailers.';
-      return;
+    if (startNewSearch) {
+      offerResults.replaceChildren();
+      moreAlternatives.hidden = true;
+      alternativeSearch = undefined;
+      await chrome.storage.local.set({ shoppingCountry: country });
+      const [injection] = await chrome.scripting.executeScript({
+        target: { tabId: basketTab }, func: readMyproteinBasket,
+      });
+      const items = injection?.result ?? [];
+      if (!items.length) {
+        alternativesStatus.textContent = 'Add a product to your Myprotein basket to compare retailers.';
+        return;
+      }
+      alternativeSearch = { country, items, checked: 0 };
     }
-    const { results } = await api('/v1/alternatives', { country, items: items.slice(0, basketLimit) });
-    alternativesStatus.textContent = [
-      `${market} · ${results.length} of ${items.length} basket products checked.`,
-      'Check delivery to your address on the retailer’s site.',
-    ].join(' ');
+
+    const search = alternativeSearch;
+    const items = search.items.slice(search.checked, search.checked + basketLimit);
+    const { results } = await api('/v1/alternatives', { country: search.country, items });
+    search.checked += results.length;
+    alternativesStatus.textContent = `${market} · ${search.checked} of ${search.items.length} basket products checked. Check delivery with the retailer.`;
     renderOffers(results);
+    moreAlternatives.hidden = search.checked >= search.items.length;
   } catch (error) {
     alternativesStatus.textContent = error.message;
   } finally {
-    findAlternatives.disabled = false;
-    marketsInput.disabled = false;
+    findAlternatives.disabled = marketInput.disabled = moreAlternatives.disabled = false;
   }
-});
+}
 
-marketsInput.addEventListener('change', () => {
+findAlternatives.addEventListener('click', () => checkAlternativeBatch(true));
+moreAlternatives.addEventListener('click', () => checkAlternativeBatch(false));
+marketInput.addEventListener('change', () => {
+  alternativeSearch = undefined;
+  moreAlternatives.hidden = true;
   offerResults.replaceChildren();
   alternativesStatus.textContent = '';
 });
-
-retry.addEventListener('click', loadCoupons);
 
 try {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -248,14 +322,12 @@ try {
     status.textContent = 'Open a shop in the current tab to find coupon codes.';
   } else {
     merchant = url.hostname.replace(/^www\./, '');
-    document.querySelector('#merchant').textContent = merchant;
+    element('merchant').textContent = merchant;
     if (tab.id && merchant === 'myprotein.com' && url.protocol === 'https:' && /^\/basket\/?$/.test(url.pathname)) {
       basketTab = tab.id;
     }
     token = await installationToken();
-    if (basketTab) await showMarketPicker();
-    await loadCoupons();
-    if (basketTab && checkoutCodes.length) await refreshCheckout(null);
+    await Promise.all([loadCoupons(), basketTab ? activateBasketTools() : undefined]);
   }
 } catch {
   status.textContent = 'Couldn’t read the current shop. Reopen CartScout to retry.';

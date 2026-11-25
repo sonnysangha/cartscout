@@ -1,12 +1,18 @@
 // Chrome serializes this function into the active tab's isolated world.
-export async function runMyproteinCoupons(codes) {
+export async function runMyproteinCoupons(codes, background = false) {
   const supported = location.protocol === 'https:'
     && ['www.myprotein.com', 'myprotein.com'].includes(location.hostname)
     && /^\/basket\/?$/.test(location.pathname);
   if (!supported) return { state: 'unsupported' };
 
-  const current = globalThis.cartScoutCouponTrial;
-  if (!codes || current?.state === 'running') return current ?? { state: 'idle' };
+  let current = globalThis.cartScoutCouponTrial;
+  if (['saved', 'accepted'].includes(current?.state)
+    && !document.getElementById('promo-code-remove')) {
+    current = undefined;
+    delete globalThis.cartScoutCouponTrial;
+  }
+  if (codes === 'stop' && current?.state === 'running') current.stopRequested = true;
+  if (!Array.isArray(codes) || current?.state === 'running') return current ?? { state: 'idle' };
 
   const candidates = [...new Set(codes.filter((code) => typeof code === 'string'
     && /^[a-z0-9_-]{3,40}$/i.test(code)))].slice(0, 10);
@@ -65,7 +71,7 @@ export async function runMyproteinCoupons(codes) {
   const before = subtotal();
   if (before === null) return { state: 'unavailable' };
 
-  const progress = { state: 'running', attempted: 0, total: candidates.length };
+  const progress = { state: 'running', attempted: 0, total: candidates.length, rejected: [] };
   globalThis.cartScoutCouponTrial = progress;
   let lastCode = '';
 
@@ -74,38 +80,54 @@ export async function runMyproteinCoupons(codes) {
     return progress;
   }
 
-  try {
-    for (const code of candidates) {
-      const field = input();
-      const button = addButton();
-      if (!field || !button || button.disabled || applied() || subtotal() !== before
-        || (field.value && field.value !== lastCode)) {
-        return complete({ state: 'changed' });
-      }
-      progress.attempted += 1;
-      lastCode = code;
-      setInput(field, code);
-      const outcome = await waitForResponse(button);
-      if (outcome === 'rejected') continue;
-      if (outcome !== 'accepted') return complete({ state: 'unknown', code });
-
-      // The applied marker can appear just before the subtotal finishes rendering.
-      for (let check = 0; check < 10; check += 1) {
-        const after = subtotal();
-        if (applied() && after !== null && after < before) {
-          return complete({ state: 'saved', code, before, after });
+  async function attempt() {
+    try {
+      for (const code of candidates) {
+        const field = input();
+        const button = addButton();
+        if (!field || !button || button.disabled || applied() || subtotal() !== before
+          || (field.value && field.value !== lastCode)) {
+          return complete({ state: 'changed' });
         }
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        progress.attempted += 1;
+        lastCode = code;
+        progress.code = code;
+        setInput(field, code);
+        const outcome = await waitForResponse(button);
+        if (outcome === 'rejected') {
+          progress.rejected.push(code);
+          if (progress.stopRequested) {
+            if (input()?.value === code) setInput(input(), '');
+            return complete({ state: 'stopped' });
+          }
+          continue;
+        }
+        if (outcome !== 'accepted') return complete({ state: 'unknown', code });
+
+        // The applied marker can appear just before the subtotal finishes rendering.
+        for (let check = 0; check < 10; check += 1) {
+          const after = subtotal();
+          if (applied() && after !== null && after < before) {
+            return complete({ state: 'saved', code, before, after });
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return complete({ state: 'accepted', code });
       }
-      return complete({ state: 'accepted', code });
+      // Clear only the last rejected value written by CartScout.
+      const field = input();
+      if (field?.value === lastCode) setInput(field, '');
+      return complete({ state: 'noMatch' });
+    } catch {
+      return complete({ state: 'unknown', code: lastCode });
     }
-    // Clear only the last rejected value written by CartScout.
-    const field = input();
-    if (field?.value === lastCode) setInput(field, '');
-    return complete({ state: 'noMatch' });
-  } catch {
-    return complete({ state: 'unknown', code: lastCode });
   }
+
+  if (background) {
+    void attempt();
+    return progress;
+  }
+  return attempt();
 }
 
 export function readMyproteinBasket() {

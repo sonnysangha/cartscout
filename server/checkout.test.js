@@ -46,7 +46,12 @@ function basket({ existingCode = false, initialInput = '' } = {}) {
       }],
     },
   };
-  return { submissions, run: () => runInNewContext(`(${runMyproteinCoupons.toString()})(candidates)`, values) };
+  const run = (command = values.candidates, background = false) => {
+    values.command = command;
+    values.background = background;
+    return runInNewContext(`(${runMyproteinCoupons.toString()})(command, background)`, values);
+  };
+  return { submissions, run };
 }
 
 test('checkout keeps the first code that reduces the subtotal', async () => {
@@ -67,4 +72,13 @@ test('checkout preserves an existing code and shopper input', async () => {
     assert.equal((await checkout.run()).state, state);
     assert.deepEqual(checkout.submissions, []);
   }
+});
+
+test('a detached run can stop after the in-flight attempt', async () => {
+  const checkout = basket();
+  assert.equal((await checkout.run(undefined, true)).state, 'running');
+  assert.equal((await checkout.run('stop')).stopRequested, true);
+  await new Promise((resolve) => setTimeout(resolve, 140));
+  assert.equal((await checkout.run(null)).state, 'stopped');
+  assert.deepEqual(checkout.submissions, ['BAD']);
 });

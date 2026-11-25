@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+const DISCOVERY_VERSION = 2;
 const DAY = 86_400_000;
 
 export function reporterKey(token) {
@@ -41,16 +42,32 @@ export function openStore(path) {
     );
   `);
 
-  const search = db.prepare('SELECT * FROM searches WHERE merchant = ?');
+  // Keep older codes and their reports, but rediscover public evidence before showing them.
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const table of ['searches', 'coupons']) {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+      if (!columns.some(({ name }) => name === 'discovery_version')) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN discovery_version INTEGER NOT NULL DEFAULT 0`);
+      }
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  const search = db.prepare('SELECT * FROM searches WHERE merchant = ? AND discovery_version = ?');
   const saveSearch = db.prepare(`
-    INSERT INTO searches VALUES (?, ?, ?, ?)
+    INSERT INTO searches VALUES (?, ?, ?, ?, ?)
     ON CONFLICT (merchant) DO UPDATE SET
-      refreshed_at = excluded.refreshed_at, retry_at = excluded.retry_at, partial = excluded.partial
+      refreshed_at = excluded.refreshed_at, retry_at = excluded.retry_at, partial = excluded.partial,
+      discovery_version = excluded.discovery_version
   `);
   const saveCoupon = db.prepare(`
-    INSERT INTO coupons VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO coupons VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (merchant, code) DO UPDATE SET offer = excluded.offer, sources = excluded.sources,
-      expires_on = excluded.expires_on, seen_at = excluded.seen_at
+      expires_on = excluded.expires_on, seen_at = excluded.seen_at, discovery_version = excluded.discovery_version
   `);
   // Older personal votes are shown in the UI but should not affect recent totals.
   const aggregate = db.prepare(`
@@ -60,7 +77,7 @@ export function openStore(path) {
       MAX(CASE WHEN r.reporter = :reporter THEN r.worked END) AS myReport
     FROM coupons c LEFT JOIN reports r ON r.merchant = c.merchant AND r.code = c.code
       AND (r.reported_at >= :recent OR r.reporter = :reporter)
-    WHERE c.merchant = :merchant AND c.seen_at >= :cutoff
+    WHERE c.merchant = :merchant AND c.seen_at >= :cutoff AND c.discovery_version = :version
       AND (c.expires_on IS NULL OR c.expires_on >= :today)
     GROUP BY c.code
     ORDER BY (worked - failed) DESC, worked DESC, c.seen_at DESC, c.code
@@ -69,7 +86,7 @@ export function openStore(path) {
   const report = db.prepare(`
     INSERT INTO reports (merchant, code, reporter, worked, reported_at)
     SELECT merchant, code, ?, ?, ? FROM coupons
-    WHERE merchant = ? AND code = ? AND seen_at >= ?
+    WHERE merchant = ? AND code = ? AND seen_at >= ? AND discovery_version = ?
       AND (expires_on IS NULL OR expires_on >= ?)
     ON CONFLICT (merchant, code, reporter) DO UPDATE SET
       worked = excluded.worked, reported_at = excluded.reported_at
@@ -77,22 +94,22 @@ export function openStore(path) {
 
   function listing(merchant, reporter, now) {
     return aggregate.all({
-      reporter, merchant, recent: now - 30 * DAY, cutoff: now - 7 * DAY,
+      reporter, merchant, version: DISCOVERY_VERSION, recent: now - 30 * DAY, cutoff: now - 7 * DAY,
       today: new Date(now).toISOString().slice(0, 10),
     }).map(({ sources, ...coupon }) => ({ ...coupon, sources: JSON.parse(sources) }));
   }
 
   return {
-    get: (merchant) => search.get(merchant),
+    get: (merchant) => search.get(merchant, DISCOVERY_VERSION),
     listing,
     save(merchant, { coupons, complete }, now) {
       const ttl = !complete ? 10 * 60_000 : coupons.length ? DAY : 2 * 60 * 60_000;
       db.exec('BEGIN IMMEDIATE');
       try {
         for (const coupon of coupons) {
-          saveCoupon.run(merchant, coupon.code, coupon.offer, JSON.stringify(coupon.sources), coupon.expiresOn, now);
+          saveCoupon.run(merchant, coupon.code, coupon.offer, JSON.stringify(coupon.sources), coupon.expiresOn, now, DISCOVERY_VERSION);
         }
-        saveSearch.run(merchant, now, now + ttl, Number(!complete));
+        saveSearch.run(merchant, now, now + ttl, Number(!complete), DISCOVERY_VERSION);
         db.exec('COMMIT');
       } catch (error) {
         db.exec('ROLLBACK');
@@ -100,7 +117,7 @@ export function openStore(path) {
       }
     },
     report(merchant, code, reporter, worked, now) {
-      return report.run(reporter, Number(worked), now, merchant, code, now - 7 * DAY,
+      return report.run(reporter, Number(worked), now, merchant, code, now - 7 * DAY, DISCOVERY_VERSION,
         new Date(now).toISOString().slice(0, 10)).changes > 0;
     },
     close: () => db.close(),

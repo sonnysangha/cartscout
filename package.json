@@ -1,8 +1,14 @@
 {
   "name": "cartscout-coupons",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.14" },
-  "scripts": { "start": "node --env-file-if-exists=.env server/index.js", "test": "node --test" }
+  "engines": {
+    "node": ">=24.14"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "test": "node --test",
+    "package:extension": "node scripts/package-extension.js"
+  }
 }

@@ -3,10 +3,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { createCouponServer } from './index.js';
 import { createDiscovery } from './oxylabs.js';
-import { openStore } from './store.js';
+import { openStore, reporterKey } from './store.js';
 
 test('discovery scrapes independent sources and filters invalid or expired codes', async () => {
   const calls = [];
@@ -18,10 +19,11 @@ test('discovery scrapes independent sources and filters invalid or expired codes
       { title: 'Deals', url: 'https://www.discounts.example.com/duplicate' },
       { title: 'Vouchers', url: 'https://savings.example.org/nike' },
       { title: 'Discount', url: 'http://127.0.0.1/invalid' },
-    ] : [{ json: { coupons: [
+    ] : [{ markdown: 'Use code: SAVE10\n\nUse code: PAST40\n\nEST\nGet Code', json: { coupons: [
       { code: ' SAVE10 ', offer: '10% off' },
       { code: 'PAST40', expiresOn: '2000-01-01' },
       { code: '<script>' },
+      { code: 'EST' },
     ] } }];
     return Response.json({ state: 'done', results });
   };
@@ -105,5 +107,44 @@ test('shared cache, votes, vote changes, and persistence survive server restart'
     assert.equal(stale.coupons[0].worked, 1);
   } finally {
     await restarted.close();
+  }
+});
+
+test('standalone official code evidence survives an empty AI extraction', async () => {
+  const discover = createDiscovery({ key: 'fixture', location: 'GB', request: async (url) => {
+    const results = url.endsWith('/search') ? [] : [{
+      markdown: 'Offers apply automatically.\n\nUse code:\n\nmore\n\n[Shop now](/shop)',
+      json: { coupons: [] },
+    }];
+    return Response.json({ state: 'done', results });
+  } });
+  assert.deepEqual((await discover('myprotein.com')).coupons.map(({ code }) => code), ['more']);
+});
+
+test('older cached coupons are rediscovered without deleting their reports', (t) => {
+  const temp = mkdtempSync(join(tmpdir(), 'cartscout-migration-'));
+  const path = join(temp, 'previous.sqlite');
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const merchant = 'myprotein.com';
+  const time = Date.now();
+  const reporter = reporterKey('fixture-report');
+  const coupon = { code: 'MORE', offer: '', sources: [], expiresOn: null };
+
+  const previous = openStore(path);
+  previous.save(merchant, { coupons: [coupon], complete: true }, time);
+  assert.equal(previous.report(merchant, coupon.code, reporter, true, time), true);
+  previous.close();
+  const legacy = new DatabaseSync(path);
+  legacy.exec('ALTER TABLE searches DROP COLUMN discovery_version; ALTER TABLE coupons DROP COLUMN discovery_version;');
+  legacy.close();
+
+  const current = openStore(path);
+  try {
+    assert.equal(current.get(merchant), undefined);
+    assert.deepEqual(current.listing(merchant, reporter, time), []);
+    current.save(merchant, { coupons: [coupon], complete: true }, time + 1);
+    assert.equal(current.listing(merchant, reporter, time + 1)[0].worked, 1);
+  } finally {
+    current.close();
   }
 });
