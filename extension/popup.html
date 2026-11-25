@@ -48,6 +48,7 @@
         </div>
       </section>
       <ol id="coupons" aria-label="Available coupon codes"></ol>
+      <p id="report-status" class="visually-hidden" role="status"></p>
       <div class="empty-state">
         <svg class="empty-art" viewBox="0 0 72 44" aria-hidden="true">
           <path d="M9 1h36a5 5 0 0 0 10 0h8a8 8 0 0 1 8 8v26a8 8 0 0 1-8 8h-8a5 5 0 0 0-10 0H9a8 8 0 0 1-8-8V9a8 8 0 0 1 8-8Z"/>
@@ -87,7 +88,10 @@
       <div class="coupon-main">
         <button type="button" class="coupon-ticket">
           <span class="ticket-content">
-            <span class="code"></span>
+            <span class="code-line">
+              <span class="code"></span>
+              <span class="copied-label" aria-hidden="true">Copied</span>
+            </span>
             <span class="offer"></span>
           </span>
           <span class="ticket-stub" aria-hidden="true">
@@ -108,13 +112,6 @@
       </div>
       <span class="visually-hidden copy-feedback" role="status"></span>
       <p class="trial-result" hidden></p>
-      <details class="coupon-more">
-        <summary>Details</summary>
-        <div class="coupon-detail">
-          <p class="counts"></p>
-          <p class="sources"></p>
-        </div>
-      </details>
     </li>
   </template>
 </body>

@@ -129,9 +129,9 @@ From the Myprotein UK basket, switch to **Other retailers**, choose a country un
 
 1. While signed in as Free, click **Upgrade to Pro** in the popup. This opens the account portal’s **Plans** view.
 2. Subscribe to the `pro` plan using a Clerk Billing test card. Use a development instance for the walkthrough. [Clerk Billing test flows](https://clerk.com/docs/guides/billing/overview#how-can-i-test-clerk-billing-flows)
-3. Return to the store and reopen the extension. Click **Refresh plan** if needed. Once Clerk reports Pro, the popup can read the shared coupon cache.
+3. Return to the store and reopen the extension. Click **Refresh plan** if needed. With Pro, you can scan as many stores as you like and see codes CartScout has already found for other Pro members.
 
-The development upgrade was exercised in Chrome. A Free scan moved the balance from five to four, reopening reused the private result, and the extension’s upgrade button opened the Clerk test checkout. Returning to CartScout showed **Pro** and **Shared cache**. This used the development payment gateway.
+The development upgrade was exercised in Chrome. A Free scan moved the balance from five to four, reopening reused the private result, and the extension’s upgrade button opened the Clerk test checkout. Returning to CartScout showed **Pro**. This used the development payment gateway.
 
 ## How it fits together
 

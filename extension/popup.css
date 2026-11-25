@@ -144,7 +144,7 @@ main { flex: 0 1 auto; min-height: 0; padding: .75rem 1rem 1rem; overflow-y: aut
 /* Coupons: perforated tickets. The whole ticket is the copy button. */
 #coupons { display: grid; gap: .5rem; }
 .coupon { display: grid; }
-.coupon-main { --report-width: 6.75rem; display: grid; grid-template-columns: minmax(0, 1fr) 0rem; }
+.coupon-main { --report-width: 6.75rem; container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr) 0rem; }
 .coupon-main[data-report-ready] { grid-template-columns: minmax(0, 1fr) var(--report-width); }
 .report-panel { display: grid; align-items: center; min-width: 0; overflow: hidden; opacity: 0; }
 .coupon-main[data-report-ready] .report-panel { opacity: 1; }
@@ -179,8 +179,11 @@ main { flex: 0 1 auto; min-height: 0; padding: .75rem 1rem 1rem; overflow-y: aut
     radial-gradient(circle at calc(100% - var(--stub)) 100%, #0000 var(--notch), #000 calc(var(--notch) + .5px)) bottom / 100% 51% no-repeat;
 }
 .coupon-ticket:hover { filter: var(--ticket-lift); }
-.ticket-content { display: grid; align-content: center; gap: .1875rem; min-width: 0; padding: .75rem .875rem .75rem 1rem; transition: opacity .2s; }
-.code { font: 650 1.1875rem/1.2 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .01em; overflow-wrap: anywhere; transition: color .2s; }
+/* Size text for the revealed ticket so opening the rail only moves the stub. */
+.ticket-content { display: grid; align-content: center; gap: .1875rem; min-width: 0; width: max(0px, 100cqi - var(--stub) - var(--report-width)); padding: .75rem .875rem .75rem 1rem; transition: opacity .2s; }
+.code-line { display: grid; font: 650 1.1875rem/1.2 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .01em; overflow-wrap: anywhere; }
+.code-line > span { grid-area: 1 / 1; }
+.copied-label { visibility: hidden; color: var(--green); }
 .offer { color: var(--muted); font-size: .8125rem; font-weight: 450; line-height: 1.35; overflow-wrap: anywhere; }
 .offer:empty { display: none; }
 .ticket-stub { position: relative; display: grid; place-content: center; justify-items: center; gap: .25rem; color: var(--ticket-accent); font-size: .6875rem; font-weight: 650; letter-spacing: .01em; transition: color .2s; }
@@ -196,7 +199,8 @@ main { flex: 0 1 auto; min-height: 0; padding: .75rem 1rem 1rem; overflow-y: aut
 
 /* Copied: the stub turns solid green with a tick, and the code reads “Copied”. */
 .coupon .coupon-ticket[data-copied] { --ticket-stub: var(--green-solid); --ticket-accent: #fff; }
-.coupon .coupon-ticket[data-copied] .code { color: var(--green); }
+.coupon-ticket[data-copied] .code { visibility: hidden; }
+.coupon-ticket[data-copied] .copied-label { visibility: visible; }
 .coupon-ticket[data-copied] .icon-copy { opacity: 0; scale: .6; }
 .coupon-ticket[data-copied] .icon-check { opacity: 1; scale: 1; }
 .coupon-ticket[data-copied] .ticket-icon { translate: 0 .5rem; scale: 1.3; }
@@ -208,17 +212,6 @@ main { flex: 0 1 auto; min-height: 0; padding: .75rem 1rem 1rem; overflow-y: aut
 .coupon[data-trial-state="rejected"] .trial-result { color: var(--red); }
 .coupon[data-trial-state="rejected"] .trial-result::before { content: "✕" / ""; }
 
-.coupon-more { margin-inline: .25rem; color: var(--muted); font-size: .75rem; }
-.coupon-more summary { display: flex; align-items: center; gap: .25rem; width: max-content; min-height: 1.5rem; margin-inline-start: auto; padding-inline: .125rem; border-radius: .375rem; cursor: pointer; list-style: none; }
-.coupon-more summary::-webkit-details-marker { display: none; }
-.coupon-more summary::after { content: ""; width: .75rem; height: .75rem; background: var(--chevron) center / contain no-repeat; }
-.coupon-more[open] summary::after { rotate: 180deg; }
-.coupon-more summary:hover { color: var(--ink); }
-.coupon-detail { display: grid; gap: .375rem; padding: .5rem 0 .25rem; }
-.sources { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .375rem; }
-.sources:empty { display: none; }
-.sources a { padding: .125rem .5rem; border-radius: 99px; background: var(--fill); font-weight: 550; text-decoration: none; }
-.sources a:hover { background: var(--fill-strong); }
 .votes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .375rem; width: var(--report-width); padding: .375rem .25rem .375rem .625rem; text-align: center; }
 .votes-label { grid-column: 1 / -1; color: var(--ink); font-size: .75rem; font-weight: 600; }
 .votes button { min-height: 2rem; padding: 0 .25rem; border-radius: 99px; font-size: .75rem; }
@@ -287,10 +280,9 @@ footer { display: grid; gap: .25rem; padding: .5rem 1rem .5625rem; border-top: 1
   button:not(:disabled):active { transform: scale(.97); }
   .coupon-ticket:not(:disabled):active { transform: scale(.985); }
   nav::before { transition: transform .3s var(--ease-out); }
-  .coupon-main { transition: grid-template-columns .28s var(--ease-out); }
+  .coupon-main { transition: grid-template-columns .24s var(--ease-out); }
   .report-panel { transition: opacity .2s .07s; }
   .ticket-icon, .ticket-icon svg, .ticket-action { transition: opacity .15s, scale .25s var(--ease-out), translate .25s var(--ease-out); }
-  .coupon-more summary::after { transition: rotate .2s var(--ease-out); }
   /* A view arrives from the side its tab sits on. */
   #views:not([hidden]) ~ main > section { animation: arrive .22s var(--ease-out); }
   #views:not([hidden]) ~ main > #alternatives { --from: .5rem; }

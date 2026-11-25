@@ -74,7 +74,7 @@ function Billing() {
     <main className="billing">
       <div className="intro">
         <h1>{pro ? 'CartScout Pro is active' : 'Choose your CartScout plan'}</h1>
-        <p>{pro ? 'Reopen CartScout in your shopping tab to use shared coupon results.' : 'Free includes five private site scans each week. Pro gives you access to shared coupon results.'}</p>
+        <p>{pro ? 'Reopen CartScout to scan as many stores as you like and see codes we’ve already found.' : 'Free includes five store scans a week. With Pro, scan as many stores as you like and see codes we’ve already found for other members.'}</p>
         {publishableKey.startsWith('pk_test_') && <p className="notice">Test checkout · No real charges</p>}
         {billingReturn && !pro && <p role="status">{refreshStatus || 'Checking your plan…'}</p>}
       </div>
