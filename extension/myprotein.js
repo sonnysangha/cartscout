@@ -34,22 +34,39 @@ export async function runMyproteinCoupons(codes, background = false) {
   function setInput(field, value) {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, value);
     field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  function waitForResponse(button) {
+  const unavailable = (button) => button.disabled || button.getAttribute?.('aria-disabled') === 'true'
+    || button.getAttribute?.('aria-busy') === 'true';
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function waitForResponse(button, previousRejected) {
     return new Promise((resolve) => {
       const previous = find('promo-error-message');
+      const previousText = previous?.textContent.trim();
       let changed = false;
+      let submitted = false;
       const observer = new MutationObserver((records) => {
-        changed ||= records.some(({ target }) => find('promo-error-message')?.contains(target));
+        const alert = find('promo-error-message');
+        changed ||= records.some(({ type, target }) => type !== 'attributes' && alert?.contains(target));
+        // A completed request can leave the same rejection text in place.
+        submitted ||= records.some(({ target, attributeName, oldValue }) => target === button && (
+          (attributeName === 'disabled' && oldValue !== null)
+          || (['aria-disabled', 'aria-busy'].includes(attributeName) && oldValue === 'true')
+        ));
       });
-      observer.observe(document.body, { childList: true, characterData: true, subtree: true });
+      observer.observe(document.body, {
+        childList: true, characterData: true, subtree: true, attributeOldValue: true,
+        attributeFilter: ['disabled', 'aria-disabled', 'aria-busy'],
+      });
       const started = performance.now();
       const timer = setInterval(() => {
         const alert = find('promo-error-message');
         const error = alert?.textContent.trim();
         if (applied()) finish('accepted');
-        else if (error && (changed || alert !== previous)) {
+        else if (error && (changed || alert !== previous || error !== previousText
+          || (previousRejected && submitted && !unavailable(button)))) {
           finish(/invalid|max redemptions|not (?:valid|applicable|apply|recognised|recognized)|expired|cannot be applied|does not apply|aren.t eligible|requirements/i
             .test(error) ? 'rejected' : 'unknown');
         } else if (performance.now() - started >= 5000) finish('unknown');
@@ -74,35 +91,60 @@ export async function runMyproteinCoupons(codes, background = false) {
   const progress = { state: 'running', attempted: 0, total: candidates.length, rejected: [] };
   globalThis.cartScoutCouponTrial = progress;
   let lastCode = '';
+  let writtenField;
 
   function complete(result) {
     Object.assign(progress, result);
     return progress;
   }
 
+  function clearWrittenCode() {
+    if (writtenField && input() === writtenField && writtenField.value === lastCode && !applied()) {
+      setInput(writtenField, '');
+    }
+  }
+
   async function attempt() {
     try {
       for (const code of candidates) {
         const field = input();
-        const button = addButton();
-        if (!field || !button || button.disabled || applied() || subtotal() !== before
+        if (!field || !addButton() || applied() || subtotal() !== before
           || (field.value && field.value !== lastCode)) {
           return complete({ state: 'changed' });
         }
-        progress.attempted += 1;
         lastCode = code;
-        progress.code = code;
+        writtenField = field;
         setInput(field, code);
-        const outcome = await waitForResponse(button);
+        const deadline = performance.now() + 500;
+        let button = addButton();
+        while (button && unavailable(button) && !progress.stopRequested && performance.now() < deadline) {
+          await pause(25);
+          button = addButton();
+        }
+        if (progress.stopRequested) {
+          clearWrittenCode();
+          return complete({ state: 'stopped' });
+        }
+        if (!button || unavailable(button) || field !== input() || field.value !== code
+          || applied() || subtotal() !== before) {
+          clearWrittenCode();
+          return complete({ state: 'changed' });
+        }
+        progress.attempted += 1;
+        progress.code = code;
+        const outcome = await waitForResponse(button, progress.rejected.length > 0);
         if (outcome === 'rejected') {
           progress.rejected.push(code);
           if (progress.stopRequested) {
-            if (input()?.value === code) setInput(input(), '');
+            clearWrittenCode();
             return complete({ state: 'stopped' });
           }
           continue;
         }
-        if (outcome !== 'accepted') return complete({ state: 'unknown', code });
+        if (outcome !== 'accepted') {
+          clearWrittenCode();
+          return complete({ state: 'unknown', code });
+        }
 
         // The applied marker can appear just before the subtotal finishes rendering.
         for (let check = 0; check < 10; check += 1) {
@@ -110,15 +152,14 @@ export async function runMyproteinCoupons(codes, background = false) {
           if (applied() && after !== null && after < before) {
             return complete({ state: 'saved', code, before, after });
           }
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await pause(100);
         }
         return complete({ state: 'accepted', code });
       }
-      // Clear only the last rejected value written by CartScout.
-      const field = input();
-      if (field?.value === lastCode) setInput(field, '');
+      clearWrittenCode();
       return complete({ state: 'noMatch' });
     } catch {
+      clearWrittenCode();
       return complete({ state: 'unknown', code: lastCode });
     }
   }
