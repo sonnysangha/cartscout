@@ -44,20 +44,20 @@ flowchart TD
   Verify --> Store["Save structured result to Convex\n(reused by every shopper)"]
 ```
 
-### How Coupon Search + 24-Hour Domain-Aware Caching Works (ELI5)
+### How Coupon Search + 24-Hour Caching Works (`@convex-dev/action-cache`)
 
-Most opens never touch Oxylabs at all. CartScout caches every completed shop scan in **Convex** (`shop_scans`) for **24 hours** and automatically shares it across regional subdomains of the same brand (e.g. `uk.ridge.com` ↔ `ridge.com`, `uk.store.anker.com` ↔ `uk.anker.com`):
+Most opens never touch Oxylabs at all. CartScout wraps its live Oxylabs actions in Convex’s official **`@convex-dev/action-cache`** component ([`convex/cache.ts`](convex/cache.ts)) using one clean key (`registrableDomain(merchant) ?? merchant`, e.g. `"ridge.com"` for both `ridge.com` and `uk.ridge.com`) with a **24-hour TTL** and automatic daily cleanup:
 
 ```mermaid
 flowchart TD
   Open["Shopper opens CartScout on a store\n(e.g. uk.ridge.com)"]
-  Open --> CheckCache{"Fresh scan in Convex?\n(exact host OR same brand domain\nwithin last 24 hours)"}
+  Open --> CheckCache{"@convex-dev/action-cache\nkey = 'ridge.com' (24h TTL)"}
 
   CheckCache -->|"YES — Cache Hit (< 50ms)"| Fast["Return cached codes + community thumbs\n(0 Oxylabs requests spent)"]
 
   CheckCache -->|"NO — Cache Miss / Expired / Rescan"| Reserve["Reserve atomic ticket in Convex UTC Ledger\n(max 6 requests, enforces daily & monthly cap)"]
-  Reserve --> RunOxy["Convex Action calls Oxylabs Web API\n• 1 × /v1/search (find official + coupon pages)\n• up to 5 × /v1/scrape (Markdown + AI JSON)"]
-  RunOxy --> Save["Save verified codes to Convex shop_scans & coupons\n+ release unused ledger slots"]
+  Reserve --> RunOxy["Convex Action calls Oxylabs Web API\n• 1 × /v1/search (find official + coupon pages)\n• up to 5 × /v1/scrape in parallel (Markdown + AI JSON)"]
+  RunOxy --> Save["@convex-dev/action-cache stores result (24h TTL)\n+ releases unused ledger slots"]
   Save --> Fast
 ```
 

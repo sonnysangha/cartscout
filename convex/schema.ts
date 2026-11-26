@@ -84,48 +84,14 @@ export default defineSchema({
     .index("by_scanId", ["scanId"])
     .index("by_reporter_and_weekStart", ["reporter", "weekStart"]),
 
-  // Shared 24-hour public shop scan pool (indexed by exact merchant and registrable brand domain).
-  shop_scans: defineTable({
-    merchant: v.string(),
-    domain: v.union(v.string(), v.null()),
-    fetchedAt: v.number(),
-    complete: v.boolean(),
-    coupons: v.array(couponItemValidator),
-    seeded: v.boolean(),
-    discoveryVersion: v.number(),
-  })
-    .index("by_merchant_and_discoveryVersion", ["merchant", "discoveryVersion"])
-    .index("by_domain_and_discoveryVersion_and_complete_and_fetchedAt", [
-      "domain",
-      "discoveryVersion",
-      "complete",
-      "fetchedAt",
-    ]),
-
   // Short cooldown window after a failed scan so broken sites aren't hammered.
+  // Note: 24h shop scan cache and 6h price lookup cache live in `@convex-dev/action-cache`
+  // (configured in `convex/convex.config.ts` and `convex/cache.ts`).
   scan_failures: defineTable({
     merchant: v.string(),
     failedAt: v.number(),
     retryAt: v.number(),
   }).index("by_merchant", ["merchant"]),
-
-  // Shared 6-hour cross-retailer price comparison cache.
-  lookups: defineTable({
-    merchant: v.string(),
-    country: v.string(),
-    name: v.string(),
-    variant: v.string(),
-    fetchedAt: v.number(),
-    freshUntil: v.number(),
-    partial: v.boolean(),
-    offers: v.array(offerItemValidator),
-    pages: v.array(lookupPageValidator),
-  }).index("by_merchant_and_country_and_name_and_variant", [
-    "merchant",
-    "country",
-    "name",
-    "variant",
-  ]),
 
   // Persistent UTC Oxylabs request ledger.
   oxylabs_requests: defineTable({

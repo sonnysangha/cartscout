@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as cache from "../cache.js";
 import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as ledger from "../ledger.js";
@@ -22,6 +23,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  cache: typeof cache;
   crons: typeof crons;
   http: typeof http;
   ledger: typeof ledger;
@@ -56,4 +58,6 @@ export declare const internal: FilterApi<
   FunctionReference<any, "internal">
 >;
 
-export declare const components: {};
+export declare const components: {
+  actionCache: import("@convex-dev/action-cache/_generated/component.js").ComponentApi<"actionCache">;
+};

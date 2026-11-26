@@ -1,6 +1,16 @@
 import { v } from "convex/values";
+import { components } from "./_generated/api";
 import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import {
+  ALTERNATIVES_CACHE_NAME,
+  ALTERNATIVES_TTL,
+  SHOP_SCAN_CACHE_NAME,
+  SHOP_SCAN_PARTIAL_TTL,
+  SHOP_SCAN_TTL,
+  alternativesKey,
+  shopScanKey,
+} from "./cache";
 import {
   couponItemValidator,
   lookupPageValidator,
@@ -356,23 +366,85 @@ export const listing = internalQuery({
   },
 });
 
+type CachedShopScan = {
+  coupons: Array<{
+    code: string;
+    offer: string;
+    sources: string[];
+    expiresOn: string | null;
+  }>;
+  complete: boolean;
+  fetchedAt: number;
+  seeded: boolean;
+};
+
+type CachedLookup = {
+  fetchedAt: number;
+  freshUntil: number;
+  partial: boolean;
+  offers: Array<{
+    title: string;
+    variant: string;
+    match: "exact" | "different_variant" | "unconfirmed";
+    retailer: string;
+    url: string;
+    price: number;
+    currency: string;
+    stockText: string;
+    availability: "in_stock" | "unknown";
+  }>;
+  pages: Array<{
+    retailer: string;
+    url: string;
+    read: boolean;
+    tries: number;
+    offer: {
+      title: string;
+      variant: string;
+      match: "exact" | "different_variant" | "unconfirmed";
+      retailer: string;
+      url: string;
+      price: number;
+      currency: string;
+      stockText: string;
+      availability: "in_stock" | "unknown";
+    } | null;
+  }>;
+};
+
+async function peekActionCache<T>(
+  ctx: QueryCtx,
+  name: string,
+  args: Record<string, unknown>,
+  ttl: number,
+): Promise<T | null> {
+  const hit = await ctx.runQuery(components.actionCache.lib.get, {
+    name,
+    args,
+    ttl,
+  });
+  return hit.kind === "hit" ? (hit.value as T) : null;
+}
+
 export const shopScan = internalQuery({
-  args: { merchant: v.string() },
+  args: {
+    merchant: v.string(),
+    domain: v.optional(v.union(v.string(), v.null())),
+  },
   returns: shopScanReturnValidator,
   handler: async (ctx, args) => {
-    const row = await ctx.db
-      .query("shop_scans")
-      .withIndex("by_merchant_and_discoveryVersion", (q) =>
-        q
-          .eq("merchant", args.merchant)
-          .eq("discoveryVersion", DISCOVERY_VERSION),
-      )
-      .unique();
-    if (!row) return null;
+    const key = shopScanKey(args.merchant, args.domain ?? null);
+    const cached = await peekActionCache<CachedShopScan>(
+      ctx,
+      SHOP_SCAN_CACHE_NAME,
+      { key },
+      SHOP_SCAN_TTL,
+    );
+    if (!cached) return null;
     return {
-      result: { coupons: row.coupons, complete: row.complete },
-      fetchedAt: row.fetchedAt,
-      seeded: row.seeded,
+      result: { coupons: cached.coupons, complete: cached.complete },
+      fetchedAt: cached.fetchedAt,
+      seeded: !!cached.seeded,
     };
   },
 });
@@ -381,21 +453,17 @@ export const shopScanByDomain = internalQuery({
   args: { domain: v.string() },
   returns: shopScanReturnValidator,
   handler: async (ctx, args) => {
-    const row = await ctx.db
-      .query("shop_scans")
-      .withIndex("by_domain_and_discoveryVersion_and_complete_and_fetchedAt", (q) =>
-        q
-          .eq("domain", args.domain)
-          .eq("discoveryVersion", DISCOVERY_VERSION)
-          .eq("complete", true),
-      )
-      .order("desc")
-      .first();
-    if (!row) return null;
+    const cached = await peekActionCache<CachedShopScan>(
+      ctx,
+      SHOP_SCAN_CACHE_NAME,
+      { key: args.domain },
+      SHOP_SCAN_TTL,
+    );
+    if (!cached || !cached.complete) return null;
     return {
-      result: { coupons: row.coupons, complete: row.complete },
-      fetchedAt: row.fetchedAt,
-      seeded: row.seeded,
+      result: { coupons: cached.coupons, complete: cached.complete },
+      fetchedAt: cached.fetchedAt,
+      seeded: !!cached.seeded,
     };
   },
 });
@@ -411,37 +479,19 @@ export const saveShopScan = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const current = await ctx.db
-      .query("shop_scans")
-      .withIndex("by_merchant_and_discoveryVersion", (q) =>
-        q
-          .eq("merchant", args.merchant)
-          .eq("discoveryVersion", DISCOVERY_VERSION),
-      )
-      .unique();
-    if (
-      current &&
-      (args.fetchedAt < current.fetchedAt ||
-        (current.complete &&
-          !args.complete &&
-          args.fetchedAt - current.fetchedAt < SCAN_LIFETIME.complete))
-    ) {
-      return false;
-    }
-    const doc = {
-      merchant: args.merchant,
-      domain: args.domain,
-      fetchedAt: args.fetchedAt,
-      complete: args.complete,
-      coupons: args.coupons,
-      seeded: args.seeded,
-      discoveryVersion: DISCOVERY_VERSION,
-    };
-    if (current) {
-      await ctx.db.patch(current._id, doc);
-    } else {
-      await ctx.db.insert("shop_scans", doc);
-    }
+    const key = shopScanKey(args.merchant, args.domain);
+    const ttl = args.complete ? SHOP_SCAN_TTL : SHOP_SCAN_PARTIAL_TTL;
+    await ctx.runMutation(components.actionCache.lib.put, {
+      name: SHOP_SCAN_CACHE_NAME,
+      args: { key },
+      value: {
+        coupons: args.coupons,
+        complete: args.complete,
+        fetchedAt: args.fetchedAt,
+        seeded: args.seeded,
+      },
+      ttl,
+    });
     return true;
   },
 });
@@ -511,24 +561,12 @@ export const getLookup = internalQuery({
     v.null(),
   ),
   handler: async (ctx, args) => {
-    const row = await ctx.db
-      .query("lookups")
-      .withIndex("by_merchant_and_country_and_name_and_variant", (q) =>
-        q
-          .eq("merchant", args.merchant)
-          .eq("country", args.country)
-          .eq("name", args.name.toLowerCase())
-          .eq("variant", args.variant.toLowerCase()),
-      )
-      .unique();
-    if (!row) return null;
-    return {
-      fetchedAt: row.fetchedAt,
-      freshUntil: row.freshUntil,
-      partial: row.partial,
-      offers: row.offers,
-      pages: row.pages,
-    };
+    return await peekActionCache<CachedLookup>(
+      ctx,
+      ALTERNATIVES_CACHE_NAME,
+      alternativesKey(args.merchant, args.country, args.name, args.variant),
+      ALTERNATIVES_TTL,
+    );
   },
 });
 
@@ -546,31 +584,19 @@ export const saveLookup = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const name = args.name.toLowerCase();
-    const variant = args.variant.toLowerCase();
-    const row = await ctx.db
-      .query("lookups")
-      .withIndex("by_merchant_and_country_and_name_and_variant", (q) =>
-        q
-          .eq("merchant", args.merchant)
-          .eq("country", args.country)
-          .eq("name", name)
-          .eq("variant", variant),
-      )
-      .unique();
-    const doc = {
-      merchant: args.merchant,
-      country: args.country,
-      name,
-      variant,
-      fetchedAt: args.fetchedAt,
-      freshUntil: args.freshUntil,
-      partial: args.partial,
-      offers: args.offers,
-      pages: args.pages,
-    };
-    if (row) await ctx.db.patch(row._id, doc);
-    else await ctx.db.insert("lookups", doc);
+    const ttl = Math.max(60_000, args.freshUntil - Date.now());
+    await ctx.runMutation(components.actionCache.lib.put, {
+      name: ALTERNATIVES_CACHE_NAME,
+      args: alternativesKey(args.merchant, args.country, args.name, args.variant),
+      value: {
+        fetchedAt: args.fetchedAt,
+        freshUntil: args.freshUntil,
+        partial: args.partial,
+        offers: args.offers,
+        pages: args.pages,
+      },
+      ttl,
+    });
     return null;
   },
 });
@@ -584,25 +610,18 @@ export const seedScan = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const current = await ctx.db
-      .query("shop_scans")
-      .withIndex("by_merchant_and_discoveryVersion", (q) =>
-        q
-          .eq("merchant", args.merchant)
-          .eq("discoveryVersion", DISCOVERY_VERSION),
-      )
-      .unique();
-    const doc = {
-      merchant: args.merchant,
-      domain: args.domain,
-      fetchedAt: args.now,
-      complete: true,
-      coupons: args.coupons,
-      seeded: true,
-      discoveryVersion: DISCOVERY_VERSION,
-    };
-    if (current) await ctx.db.patch(current._id, doc);
-    else await ctx.db.insert("shop_scans", doc);
+    const key = shopScanKey(args.merchant, args.domain);
+    await ctx.runMutation(components.actionCache.lib.put, {
+      name: SHOP_SCAN_CACHE_NAME,
+      args: { key },
+      value: {
+        coupons: args.coupons,
+        complete: true,
+        fetchedAt: args.now,
+        seeded: true,
+      },
+      ttl: SHOP_SCAN_TTL,
+    });
 
     const failure = await ctx.db
       .query("scan_failures")

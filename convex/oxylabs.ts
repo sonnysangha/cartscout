@@ -1,7 +1,19 @@
+import { ActionCache } from "@convex-dev/action-cache";
+import type { FunctionReference } from "convex/server";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
+import {
+  ALTERNATIVES_CACHE_NAME,
+  ALTERNATIVES_PARTIAL_TTL,
+  ALTERNATIVES_TTL,
+  SHOP_SCAN_CACHE_NAME,
+  SHOP_SCAN_PARTIAL_TTL,
+  SHOP_SCAN_TTL,
+  alternativesKey,
+  shopScanKey,
+} from "./cache";
 import {
   couponItemValidator,
   lookupPageValidator,
@@ -411,27 +423,93 @@ type FindAlternativesResult =
     }
   | { ok: false; refused: { scope: "day" | "month"; resetAt: number } };
 
-export const discoverShop = internalAction({
+type CachedShopScanValue = {
+  coupons: Array<{
+    code: string;
+    offer: string;
+    sources: string[];
+    expiresOn: string | null;
+  }>;
+  complete: boolean;
+  fetchedAt: number;
+  seeded: boolean;
+};
+
+type CachedAlternativesValue = {
+  fetchedAt: number;
+  freshUntil: number;
+  partial: boolean;
+  offers: Array<{
+    title: string;
+    variant: string;
+    match: "exact" | "different_variant" | "unconfirmed";
+    retailer: string;
+    url: string;
+    price: number;
+    currency: string;
+    stockText: string;
+    availability: "in_stock" | "unknown";
+  }>;
+  pages: Array<{
+    retailer: string;
+    url: string;
+    read: boolean;
+    tries: number;
+    offer: {
+      title: string;
+      variant: string;
+      match: "exact" | "different_variant" | "unconfirmed";
+      retailer: string;
+      url: string;
+      price: number;
+      currency: string;
+      stockText: string;
+      availability: "in_stock" | "unknown";
+    } | null;
+  }>;
+};
+
+const BUDGET_REFUSED_PREFIX = "BUDGET_REFUSED:";
+
+const shopScanCache: ActionCache<
+  FunctionReference<"action", "internal", { key: string }, CachedShopScanValue>
+> = new ActionCache(components.actionCache, {
+  action: internal.oxylabs.discoverShopUncached,
+  name: SHOP_SCAN_CACHE_NAME,
+  ttl: SHOP_SCAN_TTL,
+  log: true,
+});
+
+const alternativesCache: ActionCache<
+  FunctionReference<
+    "action",
+    "internal",
+    { merchant: string; country: string; name: string; variant: string },
+    CachedAlternativesValue
+  >
+> = new ActionCache(components.actionCache, {
+  action: internal.oxylabs.findAlternativesUncached,
+  name: ALTERNATIVES_CACHE_NAME,
+  ttl: ALTERNATIVES_TTL,
+  log: true,
+});
+
+/**
+ * Uncached live Oxylabs coupon discovery action, wrapped by `shopScanCache`
+ * (`@convex-dev/action-cache`, 24h TTL keyed by `key = domain ?? merchant`).
+ * Throws on budget refusal or upstream failure so failed results are never cached.
+ */
+export const discoverShopUncached = internalAction({
   args: {
-    merchant: v.string(),
-    domain: v.union(v.string(), v.null()),
+    key: v.string(),
   },
-  returns: v.union(
-    v.object({
-      ok: v.literal(true),
-      coupons: v.array(couponItemValidator),
-      complete: v.boolean(),
-      fetchedAt: v.number(),
-    }),
-    v.object({
-      ok: v.literal(false),
-      refused: v.object({
-        scope: v.union(v.literal("day"), v.literal("month")),
-        resetAt: v.number(),
-      }),
-    }),
-  ),
-  handler: async (ctx, args): Promise<DiscoverShopResult> => {
+  returns: v.object({
+    coupons: v.array(couponItemValidator),
+    complete: v.boolean(),
+    fetchedAt: v.number(),
+    seeded: v.boolean(),
+  }),
+  handler: async (ctx, args): Promise<CachedShopScanValue> => {
     const now = Date.now();
     const { daily, monthly } = readBudgetLimits();
     const holdId = crypto.randomUUID();
@@ -447,12 +525,12 @@ export const discoverShop = internalAction({
       },
     );
     if (!reserved.ok) {
-      return { ok: false as const, refused: reserved.refused };
+      throw new Error(`${BUDGET_REFUSED_PREFIX}${JSON.stringify(reserved.refused)}`);
     }
 
     const location = process.env.OXYLABS_LOCATION?.trim().toUpperCase() || "GB";
     const ai = (process.env.OXYLABS_PAGE_PARSER?.trim().toLowerCase() || "ai") !== "local";
-    const merchant = args.merchant;
+    const merchant = args.key;
     const needle = shopNeedle(merchant);
     const today = new Date(Date.now() - 12 * 3_600_000).toISOString().slice(0, 10);
 
@@ -581,10 +659,6 @@ export const discoverShop = internalAction({
 
       const attempted = [...outcome];
       if (attempted.every(([, read]) => !read)) {
-        await ctx.runMutation(internal.store.markScanFailure, {
-          merchant,
-          now: Date.now(),
-        });
         throw new Error("Oxylabs could not read the coupon sources");
       }
 
@@ -610,20 +684,15 @@ export const discoverShop = internalAction({
       const coupons = [...map.values()].slice(0, 24);
       const fetchedAt = Date.now();
       await ctx.runMutation(internal.store.clearScanFailure, { merchant });
-      await ctx.runMutation(internal.store.saveShopScan, {
-        merchant,
-        domain: args.domain,
-        coupons,
-        complete,
-        fetchedAt,
-        seeded: false,
-      });
-      return { ok: true as const, coupons, complete, fetchedAt };
+      return { coupons, complete, fetchedAt, seeded: false };
     } catch (error) {
-      await ctx.runMutation(internal.store.markScanFailure, {
-        merchant,
-        now: Date.now(),
-      });
+      const msg = error instanceof Error ? error.message : String(error);
+      if (!msg.startsWith(BUDGET_REFUSED_PREFIX)) {
+        await ctx.runMutation(internal.store.markScanFailure, {
+          merchant,
+          now: Date.now(),
+        });
+      }
       throw error;
     } finally {
       await ctx.runMutation(internal.ledger.release, { holdId });
@@ -632,8 +701,272 @@ export const discoverShop = internalAction({
 });
 
 /**
- * Runs a live Oxylabs cross-retailer price comparison directly inside a Convex Action (up to 5 requests),
- * guarded atomically by the Convex UTC ledger.
+ * Cached coupon discovery backed by `@convex-dev/action-cache` (24h TTL keyed by `domain ?? merchant`).
+ */
+export const discoverShop = internalAction({
+  args: {
+    merchant: v.string(),
+    domain: v.union(v.string(), v.null()),
+    force: v.optional(v.boolean()),
+  },
+  returns: v.union(
+    v.object({
+      ok: v.literal(true),
+      coupons: v.array(couponItemValidator),
+      complete: v.boolean(),
+      fetchedAt: v.number(),
+    }),
+    v.object({
+      ok: v.literal(false),
+      refused: v.object({
+        scope: v.union(v.literal("day"), v.literal("month")),
+        resetAt: v.number(),
+      }),
+    }),
+  ),
+  handler: async (ctx, args): Promise<DiscoverShopResult> => {
+    const key = shopScanKey(args.merchant, args.domain);
+    try {
+      const cached: CachedShopScanValue = await shopScanCache.fetch(
+        ctx,
+        { key },
+        { force: Boolean(args.force) },
+      );
+      if (!cached.complete) {
+        await ctx.runMutation(components.actionCache.lib.put, {
+          name: SHOP_SCAN_CACHE_NAME,
+          args: { key },
+          value: cached,
+          ttl: SHOP_SCAN_PARTIAL_TTL,
+        });
+      }
+      return {
+        ok: true as const,
+        coupons: cached.coupons,
+        complete: cached.complete,
+        fetchedAt: cached.fetchedAt,
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.startsWith(BUDGET_REFUSED_PREFIX)) {
+        const refused = JSON.parse(msg.slice(BUDGET_REFUSED_PREFIX.length)) as {
+          scope: "day" | "month";
+          resetAt: number;
+        };
+        return { ok: false as const, refused };
+      }
+      throw error;
+    }
+  },
+});
+
+async function runFindAlternatives(
+  ctx: ActionCtx,
+  args: {
+    merchant: string;
+    country: string;
+    name: string;
+    variant: string;
+    previousPages: CachedAlternativesValue["pages"] | null;
+  },
+): Promise<CachedAlternativesValue> {
+  const marketInfo = MARKETS[args.country];
+  if (!marketInfo) throw new Error(`Unsupported country: ${args.country}`);
+  const [market, currency] = marketInfo;
+  const item = { name: args.name, variant: args.variant };
+
+  const unreadCount = args.previousPages
+    ? args.previousPages.filter((p) => !p.read && p.tries < PAGE_TRIES).length
+    : 0;
+  const cost = args.previousPages?.length ? unreadCount : LOOKUP_CEILING;
+
+  const { daily, monthly } = readBudgetLimits();
+  const holdId = crypto.randomUUID();
+  const reserved: ReserveResult = await ctx.runMutation(
+    internal.ledger.reserve,
+    {
+      holdId,
+      operation: "lookup",
+      requests: Math.max(1, cost),
+      now: Date.now(),
+      daily,
+      monthly,
+    },
+  );
+  if (!reserved.ok) {
+    throw new Error(`${BUDGET_REFUSED_PREFIX}${JSON.stringify(reserved.refused)}`);
+  }
+
+  try {
+    let pages = args.previousPages?.length
+      ? args.previousPages.map((p) => ({ ...p }))
+      : null;
+
+    if (!pages) {
+      const search = await callOxylabs(
+        ctx,
+        holdId,
+        "lookup",
+        "search",
+        {
+          query:
+            `buy ${item.name} ${item.variant.replace(/[,/()]+/g, " ")} ${market} online retailer`.replace(
+              /\s+/g,
+              " ",
+            ),
+          max_results: 16,
+        },
+        args.country,
+        args.merchant,
+      );
+      const sources = new Map<string, string>();
+      for (const result of search) {
+        const url = sourceUrl(result.url);
+        if (
+          !url ||
+          url.pathname === "/" ||
+          /\/(?:stores|search|clp|s|c)(?:\/|$)|\/dp\/$/i.test(url.pathname)
+        ) {
+          continue;
+        }
+        const seller = normalizeMerchant(url.hostname);
+        if (
+          !seller ||
+          seller === args.merchant ||
+          seller.endsWith(`.${args.merchant}`) ||
+          sources.has(seller)
+        ) {
+          continue;
+        }
+        sources.set(seller, url.href);
+        if (sources.size >= RETAILERS_PER_ITEM) break;
+      }
+      pages = [...sources].map(([retailer, url]) => ({
+        retailer,
+        url,
+        read: false,
+        tries: 0,
+        offer: null,
+      }));
+    }
+
+    const toRead = pages.filter((p) => !p.read && p.tries < PAGE_TRIES);
+    await Promise.all(
+      toRead.map(async (page) => {
+        page.tries += 1;
+        try {
+          const scraped = await callOxylabs(
+            ctx,
+            holdId,
+            "lookup",
+            "scrape",
+            {
+              url: page.url,
+              output: ["json"],
+              json: { prompt: offerPrompt(item, market, currency) },
+            },
+            args.country,
+            args.merchant,
+          );
+          const matchPage = scraped.find(
+            (r) =>
+              r.json &&
+              typeof r.json === "object" &&
+              Object.hasOwn(r.json as object, "offer"),
+          );
+          if (!matchPage) return;
+          const raw = (matchPage.json as { offer?: Record<string, unknown> })
+            .offer;
+          const title = clean(raw?.title, 180);
+          if (
+            !raw ||
+            !title ||
+            raw.currency !== currency ||
+            typeof raw.price !== "number" ||
+            !Number.isFinite(raw.price) ||
+            raw.price <= 0 ||
+            !["exact", "different_variant", "unconfirmed"].includes(
+              String(raw.match),
+            ) ||
+            !["in_stock", "unknown"].includes(String(raw.availability))
+          ) {
+            page.offer = null;
+            page.read = true;
+            return;
+          }
+          const stockText = clean(raw.stockText, 120);
+          const variant = clean(raw.variant, 100);
+          const wording = sameVariant(item, { title, variant });
+          const rawMatch = raw.match as
+            | "exact"
+            | "different_variant"
+            | "unconfirmed";
+          const match: "exact" | "different_variant" | "unconfirmed" =
+            wording === "different" && rawMatch === "exact"
+              ? "different_variant"
+              : wording === "same" && rawMatch !== "exact"
+                ? "exact"
+                : rawMatch;
+          page.offer = {
+            title,
+            variant,
+            match,
+            retailer: page.retailer,
+            url: page.url,
+            price: raw.price,
+            currency,
+            stockText,
+            availability:
+              raw.availability === "in_stock" && stockText
+                ? "in_stock"
+                : "unknown",
+          };
+          page.read = true;
+        } catch {
+          // Partial failure leaves page.read = false for cheap retry.
+        }
+      }),
+    );
+
+    const rank = (o: { match: string; availability: string }) =>
+      (o.match !== "exact" ? 2 : 0) + (o.availability !== "in_stock" ? 1 : 0);
+    const offers = pages
+      .flatMap((p) => (p.read && p.offer ? [p.offer] : []))
+      .sort((a, b) => rank(a) - rank(b) || a.price - b.price);
+    const partial = pages.some((p) => !p.read);
+    const fetchedAt = Date.now();
+    const freshUntil = fetchedAt + (partial ? ALTERNATIVES_PARTIAL_TTL : ALTERNATIVES_TTL);
+    return { fetchedAt, freshUntil, partial, offers, pages };
+  } finally {
+    await ctx.runMutation(internal.ledger.release, { holdId });
+  }
+}
+
+/**
+ * Uncached live Oxylabs price comparison action, wrapped by `alternativesCache`
+ * (`@convex-dev/action-cache`, 6h TTL keyed by `{ merchant, country, name, variant }`).
+ */
+export const findAlternativesUncached = internalAction({
+  args: {
+    merchant: v.string(),
+    country: v.string(),
+    name: v.string(),
+    variant: v.string(),
+  },
+  returns: v.object({
+    fetchedAt: v.number(),
+    freshUntil: v.number(),
+    partial: v.boolean(),
+    offers: v.array(offerItemValidator),
+    pages: v.array(lookupPageValidator),
+  }),
+  handler: async (ctx, args): Promise<CachedAlternativesValue> => {
+    return await runFindAlternatives(ctx, { ...args, previousPages: null });
+  },
+});
+
+/**
+ * Cached cross-retailer price comparison backed by `@convex-dev/action-cache` (6h TTL).
  */
 export const findAlternatives = internalAction({
   args: {
@@ -658,172 +991,52 @@ export const findAlternatives = internalAction({
     }),
   ),
   handler: async (ctx, args): Promise<FindAlternativesResult> => {
-    const marketInfo = MARKETS[args.country];
-    if (!marketInfo) throw new Error(`Unsupported country: ${args.country}`);
-    const [market, currency] = marketInfo;
-
-    const unreadCount = args.previousPages
-      ? args.previousPages.filter((p) => !p.read && p.tries < PAGE_TRIES).length
-      : 0;
-    const cost = args.previousPages?.length ? unreadCount : LOOKUP_CEILING;
-
-    const { daily, monthly } = readBudgetLimits();
-    const holdId = crypto.randomUUID();
-    const reserved: ReserveResult = await ctx.runMutation(
-      internal.ledger.reserve,
-      {
-        holdId,
-        operation: "lookup",
-        requests: Math.max(1, cost),
-        now: Date.now(),
-        daily,
-        monthly,
-      },
+    const cacheArgs = alternativesKey(
+      args.merchant,
+      args.country,
+      args.item.name,
+      args.item.variant,
     );
-    if (!reserved.ok) {
-      return { ok: false as const, refused: reserved.refused };
-    }
-
     try {
-      let pages = args.previousPages?.length
-        ? args.previousPages.map((p) => ({ ...p }))
-        : null;
-
-      if (!pages) {
-        const search = await callOxylabs(
-          ctx,
-          holdId,
-          "lookup",
-          "search",
-          {
-            query:
-              `buy ${args.item.name} ${args.item.variant.replace(/[,/()]+/g, " ")} ${market} online retailer`.replace(
-                /\s+/g,
-                " ",
-              ),
-            max_results: 16,
-          },
-          args.country,
-          args.merchant,
-        );
-        const sources = new Map<string, string>();
-        for (const result of search) {
-          const url = sourceUrl(result.url);
-          if (
-            !url ||
-            url.pathname === "/" ||
-            /\/(?:stores|search|clp|s|c)(?:\/|$)|\/dp\/$/i.test(url.pathname)
-          ) {
-            continue;
-          }
-          const seller = normalizeMerchant(url.hostname);
-          if (
-            !seller ||
-            seller === args.merchant ||
-            seller.endsWith(`.${args.merchant}`) ||
-            sources.has(seller)
-          ) {
-            continue;
-          }
-          sources.set(seller, url.href);
-          if (sources.size >= RETAILERS_PER_ITEM) break;
+      let result: CachedAlternativesValue;
+      if (args.previousPages?.length) {
+        result = await runFindAlternatives(ctx, {
+          ...cacheArgs,
+          previousPages: args.previousPages,
+        });
+        await ctx.runMutation(components.actionCache.lib.put, {
+          name: ALTERNATIVES_CACHE_NAME,
+          args: cacheArgs,
+          value: result,
+          ttl: result.partial ? ALTERNATIVES_PARTIAL_TTL : ALTERNATIVES_TTL,
+        });
+      } else {
+        result = await alternativesCache.fetch(ctx, cacheArgs);
+        if (result.partial) {
+          await ctx.runMutation(components.actionCache.lib.put, {
+            name: ALTERNATIVES_CACHE_NAME,
+            args: cacheArgs,
+            value: result,
+            ttl: ALTERNATIVES_PARTIAL_TTL,
+          });
         }
-        pages = [...sources].map(([retailer, url]) => ({
-          retailer,
-          url,
-          read: false,
-          tries: 0,
-          offer: null,
-        }));
       }
-
-      const toRead = pages.filter((p) => !p.read && p.tries < PAGE_TRIES);
-      await Promise.all(
-        toRead.map(async (page) => {
-          page.tries += 1;
-          try {
-            const scraped = await callOxylabs(
-              ctx,
-              holdId,
-              "lookup",
-              "scrape",
-              {
-                url: page.url,
-                output: ["json"],
-                json: { prompt: offerPrompt(args.item, market, currency) },
-              },
-              args.country,
-              args.merchant,
-            );
-            const matchPage = scraped.find(
-              (r) =>
-                r.json &&
-                typeof r.json === "object" &&
-                Object.hasOwn(r.json as object, "offer"),
-            );
-            if (!matchPage) return;
-            const raw = (matchPage.json as { offer?: Record<string, unknown> })
-              .offer;
-            const title = clean(raw?.title, 180);
-            if (
-              !raw ||
-              !title ||
-              raw.currency !== currency ||
-              typeof raw.price !== "number" ||
-              !Number.isFinite(raw.price) ||
-              raw.price <= 0 ||
-              !["exact", "different_variant", "unconfirmed"].includes(
-                String(raw.match),
-              ) ||
-              !["in_stock", "unknown"].includes(String(raw.availability))
-            ) {
-              page.offer = null;
-              page.read = true;
-              return;
-            }
-            const stockText = clean(raw.stockText, 120);
-            const variant = clean(raw.variant, 100);
-            const wording = sameVariant(args.item, { title, variant });
-            const rawMatch = raw.match as
-              | "exact"
-              | "different_variant"
-              | "unconfirmed";
-            const match: "exact" | "different_variant" | "unconfirmed" =
-              wording === "different" && rawMatch === "exact"
-                ? "different_variant"
-                : wording === "same" && rawMatch !== "exact"
-                  ? "exact"
-                  : rawMatch;
-            page.offer = {
-              title,
-              variant,
-              match,
-              retailer: page.retailer,
-              url: page.url,
-              price: raw.price,
-              currency,
-              stockText,
-              availability:
-                raw.availability === "in_stock" && stockText
-                  ? "in_stock"
-                  : "unknown",
-            };
-            page.read = true;
-          } catch {
-            // Partial failure leaves page.read = false for cheap retry.
-          }
-        }),
-      );
-
-      const rank = (o: { match: string; availability: string }) =>
-        (o.match !== "exact" ? 2 : 0) + (o.availability !== "in_stock" ? 1 : 0);
-      const offers = pages
-        .flatMap((p) => (p.read && p.offer ? [p.offer] : []))
-        .sort((a, b) => rank(a) - rank(b) || a.price - b.price);
-      const partial = pages.some((p) => !p.read);
-      return { ok: true as const, offers, partial, pages };
-    } finally {
-      await ctx.runMutation(internal.ledger.release, { holdId });
+      return {
+        ok: true as const,
+        offers: result.offers,
+        partial: result.partial,
+        pages: result.pages,
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.startsWith(BUDGET_REFUSED_PREFIX)) {
+        const refused = JSON.parse(msg.slice(BUDGET_REFUSED_PREFIX.length)) as {
+          scope: "day" | "month";
+          resetAt: number;
+        };
+        return { ok: false as const, refused };
+      }
+      throw error;
     }
   },
 });

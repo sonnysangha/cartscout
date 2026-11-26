@@ -74,7 +74,7 @@ export function openConvexStore({ siteUrl, secret, request = fetch }) {
     ledger,
     get: (merchant) => rpc('store:getSearch', { merchant }),
     listing: (merchant, reporter, now) => rpc('store:listing', { merchant, reporter, now }),
-    shopScan: (merchant) => rpc('store:shopScan', { merchant }),
+    shopScan: (merchant) => rpc('store:shopScan', { merchant, domain: registrableDomain(merchant) }),
     shopScanByDomain: (domain) => rpc('store:shopScanByDomain', { domain }),
     saveShopScan: (merchant, result, fetchedAt, seeded = false) => rpc('store:saveShopScan', {
       merchant,
@@ -137,9 +137,10 @@ export function openConvexStore({ siteUrl, secret, request = fetch }) {
     }),
     recentWins: (now, limit = 12) => rpc('store:recentWins', { now, limit }),
     winsCount: (now) => rpc('store:winsCount', { now }),
-    discoverShopAction: (merchant) => rpc('oxylabs:discoverShop', {
+    discoverShopAction: (merchant, force = false) => rpc('oxylabs:discoverShop', {
       merchant,
       domain: registrableDomain(merchant),
+      force: !!force,
     }, 90_000),
     findAlternativesAction: (merchant, country, item, previousPages = null) => rpc('oxylabs:findAlternatives', {
       merchant,

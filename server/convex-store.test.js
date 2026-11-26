@@ -29,13 +29,15 @@ function createMockConvexRpc(expectedSecret) {
     if (op === 'store:getSearch') {
       result = searches.get(args.merchant) ?? null;
     } else if (op === 'store:shopScan') {
-      result = shopScans.get(args.merchant) ?? null;
+      const key = args.domain ?? args.merchant;
+      const entry = shopScans.get(key);
+      result = entry ? { result: entry.result, fetchedAt: entry.fetchedAt, seeded: entry.seeded } : null;
     } else if (op === 'store:shopScanByDomain') {
-      const matches = [...shopScans.values()].filter((s) => s.domain === args.domain && s.result.complete);
-      matches.sort((a, b) => b.fetchedAt - a.fetchedAt);
-      result = matches[0] ? { result: matches[0].result, fetchedAt: matches[0].fetchedAt, seeded: matches[0].seeded } : null;
+      const entry = shopScans.get(args.domain);
+      result = entry?.result.complete ? { result: entry.result, fetchedAt: entry.fetchedAt, seeded: entry.seeded } : null;
     } else if (op === 'store:saveShopScan') {
-      shopScans.set(args.merchant, {
+      const key = args.domain ?? args.merchant;
+      shopScans.set(key, {
         domain: args.domain,
         result: { coupons: args.coupons, complete: args.complete },
         fetchedAt: args.fetchedAt,

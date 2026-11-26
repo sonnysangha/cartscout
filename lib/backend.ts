@@ -6,7 +6,6 @@ import { parseBasket, retryCost } from "@/server/alternatives.js";
 import {
   normalizeCode,
   normalizeMerchant,
-  registrableDomain,
 } from "@/server/oxylabs.js";
 import { LOOKUP_LIFETIME, reporterKey, SCAN_LIFETIME } from "@/server/store.js";
 
@@ -164,14 +163,9 @@ export async function buildCouponsPayload(
   };
 }
 
+/** Single-key peek into `@convex-dev/action-cache` (`key = registrableDomain(merchant) ?? merchant`). */
 async function shopRecord(merchant: string) {
-  const store = getConvexStore();
-  const exact = await store.shopScan(merchant);
-  if (exact?.result.complete) return exact;
-  const domain = registrableDomain(merchant);
-  const sibling = domain ? await store.shopScanByDomain(domain) : null;
-  if (sibling && (!exact || sibling.fetchedAt > exact.fetchedAt)) return sibling;
-  return exact;
+  return getConvexStore().shopScan(merchant);
 }
 
 function failedRecently(mark: { retry_at: number }, time: number) {
@@ -273,9 +267,9 @@ export async function handleCouponsLookup(
     throw failedRecently(mark, time);
   }
 
-  // Delegate live Oxylabs coupon discovery directly to the Convex Action (10-min runtime, atomic Convex ledger).
+  // Delegate live Oxylabs coupon discovery directly to the `@convex-dev/action-cache` wrapped Convex Action.
   try {
-    const discovered = await store.discoverShopAction(merchant);
+    const discovered = await store.discoverShopAction(merchant, force);
     if (!discovered.ok) {
       if (reservation) await store.releaseScan(reservation);
       const err = budgetReached("scan", discovered.refused);
@@ -332,7 +326,8 @@ export async function handleAlternativesLookup(
         return fromSaved(false);
       }
 
-      // Live Oxylabs cross-retailer comparison runs directly inside a Convex Action.
+      // Live Oxylabs cross-retailer comparison runs directly inside the `@convex-dev/action-cache` wrapped Convex Action
+      // (6h TTL keyed by `{ merchant, country, name, variant }`, automatically cached & expired by Convex).
       const found = await store.findAlternativesAction(
         merchant,
         basket.country,
@@ -345,19 +340,6 @@ export async function handleAlternativesLookup(
       }
       const partial = !!found.partial;
       const fetchedAt = retry ? saved.fetchedAt : Date.now();
-      const freshUntil = partial
-        ? Math.min(
-            Date.now() + LOOKUP_LIFETIME.partial,
-            fetchedAt + LOOKUP_LIFETIME.complete,
-          )
-        : fetchedAt + LOOKUP_LIFETIME.complete;
-      await store.saveLookup(
-        merchant,
-        basket.country,
-        item,
-        { offers: found.offers, partial, pages: found.pages ?? [] },
-        { fetchedAt, freshUntil },
-      );
       return { offers: found.offers, partial, fetchedAt: iso(fetchedAt) };
     }),
   );
