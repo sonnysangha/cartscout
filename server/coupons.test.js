@@ -14,25 +14,32 @@ test('discovery scrapes independent sources and filters invalid or expired codes
   const request = async (address, { body }) => {
     const input = JSON.parse(body);
     calls.push({ address, input });
+    // The shop's own home page advertises no code here. Coupon sites are only read when that is so.
+    const home = input.url === 'https://nike.com/';
     const results = address.endsWith('/search') ? [
       { title: 'Coupons', url: 'https://discounts.example.com/nike' },
       { title: 'Deals', url: 'https://www.discounts.example.com/duplicate' },
       { title: 'Vouchers', url: 'https://savings.example.org/nike' },
       { title: 'Discount', url: 'http://127.0.0.1/invalid' },
-    ] : [{ markdown: 'Use code: SAVE10\n\nUse code: PAST40\n\nEST\nGet Code', json: { coupons: [
-      { code: ' SAVE10 ', offer: '10% off' },
-      { code: 'PAST40', expiresOn: '2000-01-01' },
-      { code: '<script>' },
-      { code: 'EST' },
-    ] } }];
+    ] : home ? [{ markdown: 'New season trainers and free delivery over £50.', json: { coupons: [] } }]
+      : [{ markdown: 'Use code: SAVE10\n\nUse code: PAST40\n\nEST\nGet Code', json: { coupons: [
+        { code: ' SAVE10 ', offer: '10% off' },
+        { code: 'PAST40', expiresOn: '2000-01-01' },
+        { code: '<script>' },
+        { code: 'EST' },
+      ] } }];
     return Response.json({ state: 'done', results });
   };
   const discover = createDiscovery({ key: 'fixture', location: 'GB', request });
   const result = await discover('nike.com');
-  assert.equal(calls.length, 3);
+  // One search, the shop's own home page, and then, because it showed no code, each independent coupon site once.
+  assert.equal(calls.length, 4);
   assert.match(calls[0].input.query, /nike\.com coupon/);
   assert.equal(calls[0].input.location, 'GB');
   assert.match(calls[1].input.json.prompt, /nike\.com/);
+  assert.deepEqual(calls.slice(1).map(({ input }) => input.url), [
+    'https://nike.com/', 'https://discounts.example.com/nike', 'https://savings.example.org/nike',
+  ]);
   assert.deepEqual(result, { complete: true, coupons: [{
     code: 'SAVE10', offer: '10% off', expiresOn: null,
     sources: ['https://discounts.example.com/nike', 'https://savings.example.org/nike'],
@@ -118,7 +125,30 @@ test('standalone official code evidence survives an empty AI extraction', async 
     }];
     return Response.json({ state: 'done', results });
   } });
-  assert.deepEqual((await discover('myprotein.com')).coupons.map(({ code }) => code), ['more']);
+  assert.deepEqual((await discover('myprotein.com')).coupons.map(({ code }) => code), ['MORE']);
+});
+
+test('a code in the shop’s own banner is found, and a blocked home page does not make the scan partial', async () => {
+  const pages = {
+    'https://lookfantastic.com/': [{
+      markdown: 'Order by 1AM for Next Day Delivery\n\nUP TO 30% OFF + EXTRA 5% OFF SELECTED - USE CODE: EXTRA | APP EXCLUSIVE\n\n[Black Friday](/c/black-friday/)',
+      json: { coupons: [] },
+    }],
+    'https://codes.example.org/lookfantastic': [{ markdown: 'Get Code\n\nReveal code', json: { coupons: [] } }],
+  };
+  const service = (blocked) => createDiscovery({ key: 'fixture', location: 'GB', request: async (address, { body }) => {
+    const { url } = JSON.parse(body);
+    if (address.endsWith('/search')) {
+      return Response.json({ state: 'done', results: [{ title: 'Lookfantastic discount codes', url: 'https://codes.example.org/lookfantastic' }] });
+    }
+    if (blocked && url === 'https://lookfantastic.com/') return new Response('', { status: 613 });
+    return Response.json({ state: 'done', results: pages[url] });
+  } });
+
+  assert.deepEqual(await service(false)('lookfantastic.com'), { complete: true, coupons: [{
+    code: 'EXTRA', offer: 'Up to 30% off + extra 5% off selected', sources: ['https://lookfantastic.com/'], expiresOn: null,
+  }] });
+  assert.deepEqual(await service(true)('lookfantastic.com'), { complete: true, coupons: [] });
 });
 
 test('older cached coupons are rediscovered without deleting their reports', (t) => {
@@ -147,4 +177,60 @@ test('older cached coupons are rediscovered without deleting their reports', (t)
   } finally {
     current.close();
   }
+});
+
+test('a shop page that is blank without JavaScript is read again rendered', async () => {
+  const scrapes = [];
+  const discover = createDiscovery({ key: 'fixture', location: 'GB', request: async (address, { body }) => {
+    const input = JSON.parse(body);
+    if (address.endsWith('/search')) return Response.json({ state: 'done', results: [] });
+    scrapes.push(input.run_js === true);
+    const markdown = input.run_js
+      ? `${'Vitamins and supplements. '.repeat(12)}\n\n20% off £40 or 15% off £30 Code:SAVECopiedShop now Redeem instore`
+      : '';
+    return Response.json({ state: 'done', results: [{ markdown, json: { coupons: [] } }] });
+  } });
+
+  assert.deepEqual(await discover('hollandandbarrett.com'), { complete: true, coupons: [{
+    code: 'SAVE', offer: '20% off £40 or 15% off £30', sources: ['https://hollandandbarrett.com/'], expiresOn: null,
+  }] });
+  assert.deepEqual(scrapes, [false, true]);
+});
+
+test('hasPublicCode accepts real coupon-site wording ("Enter CODE at checkout", tables) and prefers open-code sites over reveal walls', async () => {
+  const scraped = [];
+  const discover = createDiscovery({ key: 'fixture', location: 'GB', request: async (address, { body }) => {
+    const input = JSON.parse(body);
+    if (address.endsWith('/search')) {
+      return Response.json({ state: 'done', results: [
+        { title: 'Shop Discount Codes - Wowcher', url: 'https://www.wowcher.co.uk/discountcodes/shop.example.com' },
+        { title: 'Shop Voucher Codes - Telegraph', url: 'https://www.telegraph.co.uk/vouchercodes/shop' },
+        { title: 'Shop Promo Codes', url: 'https://www.couponsolver.com/promo-codes/shop.example.com' },
+        { title: 'Shop Coupons', url: 'https://wethrift.com/shop-example' },
+        { title: 'Shop Deals', url: 'https://www.groupon.co.uk/discount-codes/shop' },
+      ] });
+    }
+    scraped.push(input.url);
+    if (input.url.includes('couponsolver')) {
+      return Response.json({ state: 'done', results: [{
+        markdown: '#### How to use it\n\nEnter HB25 at checkout to get 25% off sitewide.\n\n| `EXTRA15` | 15% off |\n\nEST\nGet Code',
+        json: { coupons: [
+          { code: 'HB25', offer: '25% off sitewide' },
+          { code: 'EXTRA15', offer: '15% off' },
+          { code: 'EST', offer: 'Masked preview' },
+        ] },
+      }] });
+    }
+    return Response.json({ state: 'done', results: [{ markdown: 'Welcome to the shop. Free delivery on orders over £50.', json: { coupons: [] } }] });
+  } });
+
+  const found = await discover('shop.example.com');
+  // Open-code sites (couponsolver, wethrift) and mixed (groupon) are chosen ahead of wowcher/telegraph reveal walls.
+  assert.deepEqual(scraped, [
+    'https://shop.example.com/',
+    'https://www.couponsolver.com/promo-codes/shop.example.com',
+    'https://wethrift.com/shop-example',
+    'https://www.groupon.co.uk/discount-codes/shop',
+  ]);
+  assert.deepEqual(found.coupons.map((c) => c.code), ['HB25', 'EXTRA15']);
 });

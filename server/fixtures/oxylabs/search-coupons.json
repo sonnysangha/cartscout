@@ -1,0 +1,48 @@
+{
+  "state": "done",
+  "results": [
+    {
+      "title": "Voucher codes and offers | Scout Fixture Shop",
+      "outline": [
+        "Find this month's voucher codes for Scout Fixture Shop, with free delivery over £30 and 15% off your first order ..."
+      ],
+      "url": "https://www.scoutfixtureshop.com/offers/voucher-codes/",
+      "metadata": { "position": 1 }
+    },
+    {
+      "title": "Scout Fixture Shop discount codes for November",
+      "outline": [
+        "12 Scout Fixture Shop promo codes checked today. Save 20% this weekend ..."
+      ],
+      "url": "https://codes.example.org/scoutfixtureshop",
+      "metadata": { "position": 2 }
+    },
+    {
+      "title": "Today's best deals from every shop",
+      "outline": [
+        "Free delivery at Scout Fixture Shop, 10% off at Another Store and more ..."
+      ],
+      "url": "https://deals.example.net/today",
+      "metadata": { "position": 3 }
+    },
+    {
+      "title": "Scout Fixture Shop - Encyclopedia",
+      "outline": [
+        "Scout Fixture Shop is a made-up retailer used in CartScout's tests ..."
+      ],
+      "url": "https://encyclopedia.example.org/wiki/Scout_Fixture_Shop",
+      "metadata": { "position": 4 }
+    }
+  ],
+  "related_questions": [],
+  "related_searches": [],
+  "params": {
+    "query": "scoutfixtureshop.com coupon codes promo codes discount checkout",
+    "location": "GB",
+    "max_results": 10
+  },
+  "metadata": {
+    "timestamp": 1795694400,
+    "request_id": "1795694400000000001"
+  }
+}

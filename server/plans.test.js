@@ -97,6 +97,7 @@ test('Free cache and reports are private, and upgrading exposes the Pro shared c
   assert.equal((await call('coupons', 'a'.repeat(64), site)).status, 401);
   const pro = (await call('coupons', 'pro-c', site)).body;
   assert.equal(pro.coupons[0].code, 'CODE1');
+  assert.equal(pro.reused, undefined);
 
   const needsScan = await call('coupons', 'free-a', { ...site, cacheOnly: true });
   assert.equal(needsScan.status, 409);
@@ -105,22 +106,33 @@ test('Free cache and reports are private, and upgrading exposes the Pro shared c
   assert.equal(start.scans, 1);
   assert.equal((await call('reports', 'free-a', { ...site, code: 'CODE1', worked: true })).status, 404);
 
+  // The server read this shop a moment ago for another member. A Free member's scan is answered from those pages:
+  // nothing is read again, it still uses one of their scans, and the answer says when the pages were read.
   const free = (await call('coupons', 'free-a', site)).body;
-  assert.equal(free.coupons[0].code, 'CODE2');
+  assert.equal(free.coupons[0].code, 'CODE1');
+  assert.equal(free.source, 'live');
+  assert.equal(free.reused, true);
+  assert.equal(free.fetchedAt, new Date(start.now).toISOString());
   assert.equal(free.account.scans.remaining, 4);
-  assert.equal((await call('reports', 'free-a', { ...site, code: 'CODE2', worked: true })).body.coupons[0].worked, 1);
-  assert.equal((await call('reports', 'free-b', { ...site, code: 'CODE2', worked: true })).status, 404);
+  assert.equal(start.scans, 1);
+  // The codes are public pages. The list and its thumbs are still each Free member's own.
+  assert.equal((await call('reports', 'free-a', { ...site, code: 'CODE1', worked: true })).body.coupons[0].worked, 1);
+  assert.equal((await call('reports', 'free-b', { ...site, code: 'CODE1', worked: true })).status, 404);
   const repeat = (await call('coupons', 'free-a', { ...site, cacheOnly: true })).body;
   assert.equal(repeat.source, 'cache');
+  assert.equal(repeat.reused, true);
   assert.equal(repeat.account.scans.remaining, 4);
   const different = (await call('coupons', 'free-b', site)).body;
-  assert.equal(different.coupons[0].code, 'CODE3');
+  assert.equal(different.coupons[0].code, 'CODE1');
   assert.equal(different.coupons[0].worked, 0);
+  assert.equal(different.account.scans.remaining, 4);
   const afterUpgrade = (await call('coupons', 'pro-a', site)).body;
   assert.equal(afterUpgrade.source, 'cache');
   assert.deepEqual(afterUpgrade.account, { userId: 'user_alex', plan: 'pro', scans: null });
   assert.equal(afterUpgrade.coupons[0].code, 'CODE1');
-  assert.equal(start.scans, 3);
+  // Thumbs are shared between Pro members only: the one Alex gave as a Free member is not in the Pro count.
+  assert.equal(afterUpgrade.coupons[0].worked, 0);
+  assert.equal(start.scans, 1);
 });
 
 test('Free quota is race resistant, per account, and resets Monday UTC', async (t) => {
@@ -140,15 +152,36 @@ test('Free quota is race resistant, per account, and resets Monday UTC', async (
   assert.equal((await call('coupons', 'free-a', site)).body.account.scans.remaining, 4);
 });
 
-test('failed Free scans release their quota and Free retailer caches are private', async (t) => {
+test('failed Free scans release their quota, and a price lookup is shared because prices are public', async (t) => {
   const { call, start } = await service(t);
   assert.equal((await call('coupons', 'free-a', { merchant: 'unavailable.example.com' })).status, 502);
   assert.equal((await call('account', 'free-a')).body.scans.remaining, 5);
 
+  // One lookup answers every member, Free or Pro, who asks about the same product at the same shop.
   const basket = { ...site, country: 'GB', items: [{ name: 'Test Product' }] };
   for (const token of ['free-a', 'free-a', 'free-b', 'pro-a', 'pro-c']) {
     assert.equal((await call('alternatives', token, basket)).status, 200);
   }
-  assert.equal(start.comparisons, 3);
+  assert.equal(start.comparisons, 1);
   assert.equal((await call('account', 'free-a')).body.scans.remaining, 5);
+});
+
+test('a Free saved scan that has aged out is still shown, and scanning again stays a choice', async (t) => {
+  const { call, start } = await service(t);
+  const first = (await call('coupons', 'free-a', site)).body;
+  assert.equal(first.source, 'live');
+  assert.equal(first.account.scans.remaining, 4);
+
+  start.now += 25 * 60 * 60_000;
+  const saved = await call('coupons', 'free-a', { ...site, cacheOnly: true });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.source, 'stale');
+  assert.equal(saved.body.coupons[0].code, 'CODE1');
+  assert.equal(saved.body.account.scans.remaining, 4);
+  assert.equal(start.scans, 1);
+
+  const rescanned = (await call('coupons', 'free-a', site)).body;
+  assert.equal(rescanned.source, 'live');
+  assert.equal(rescanned.account.scans.remaining, 3);
+  assert.equal(start.scans, 2);
 });

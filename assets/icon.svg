@@ -1,4 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#0d9488"/>
-  <text x="32" y="32" dy="0.35em" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="600" fill="#ffffff">C</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="CartScout">
+  <rect width="128" height="128" rx="30" fill="#1f1b16"/>
+  <g transform="translate(10.800 23.200) scale(1.130)">
+    <path d="M32 24V4.500" fill="none" stroke="#fff" stroke-width="2.200" stroke-linecap="round"/>
+    <path d="M32 4.600 46 9.400 32 14.200Z" fill="#ff6fa5" stroke="#ff6fa5" stroke-width="1.600" stroke-linejoin="round"/>
+    <path d="M27 24h54q5 0 3.420 4.740l-5.890 17.670Q76 54 68 54H38q-8 0-10.060-7.730l-4.650-17.440Q22 24 27 24Z" fill="#ffd23f"/>
+    <path d="M5 10.500h6.500L18 24h71" fill="none" stroke="#fff" stroke-width="5.500" stroke-linecap="round" stroke-linejoin="round"/>
+    <ellipse cx="50" cy="37" rx="6.600" ry="7.200" fill="#fff"/>
+    <ellipse cx="66" cy="37" rx="6.600" ry="7.200" fill="#fff"/>
+    <circle cx="51.800" cy="37.600" r="3.500" fill="#1f1b16"/>
+    <circle cx="67.800" cy="37.600" r="3.500" fill="#1f1b16"/>
+    <circle cx="50.600" cy="36.200" r="1.150" fill="#fff"/>
+    <circle cx="66.600" cy="36.200" r="1.150" fill="#fff"/>
+    <path d="M54 46.400q4 3.600 8 0" fill="none" stroke="#1f1b16" stroke-width="2.600" stroke-linecap="round"/>
+    <circle cx="38" cy="62" r="8.500" fill="#fff"/>
+    <circle cx="38" cy="62" r="3.100" fill="#1f1b16"/>
+    <circle cx="70" cy="62" r="8.500" fill="#fff"/>
+    <circle cx="70" cy="62" r="3.100" fill="#1f1b16"/>
+  </g>
 </svg>

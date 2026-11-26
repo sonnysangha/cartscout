@@ -1,305 +1,602 @@
+/* The toolbar popup. Tokens, fonts and pressable buttons come from brand.css; Scout from scout.css.
+   The stage is fixed at 380 x 560: header 64, tabs 48, footer 72, and main (376) is the only thing that scrolls.
+   On a screen too short to give the popup 560, popup-fit.js sets --stage-block to the height there is:
+   header, tabs, pinned bar and footer keep their heights and main alone gets shorter. */
+
 /* Ticket colours are registered so a copied or applied ticket eases between states. */
 @property --ticket-paper { syntax: "<color>"; inherits: true; initial-value: transparent; }
 @property --ticket-stub { syntax: "<color>"; inherits: true; initial-value: transparent; }
 
 :root {
-  color-scheme: light dark;
-  font: 100%/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --canvas: #fff;
-  --paper: #fbf4ed;
-  --ink: #2b2134;
-  --muted: #655a6e;
-  --faint: #776c80;
-  --line: rgb(43 33 52 / 10%);
-  --line-strong: rgb(43 33 52 / 18%);
-  --fill: rgb(43 33 52 / 6%);
-  --fill-strong: rgb(43 33 52 / 10%);
-  --thumb: #fff;
-  --primary: #3c2a4d;
-  --primary-hover: #4e3963;
-  --on-primary: #fff;
-  --link: #5a3572;
-  --peach: #f3a48d;
-  --peach-soft: #fde8de;
-  --peach-ink: #8a3a29;
-  --green: #1d6a45;
-  --green-soft: #e1f3e7;
-  --green-solid: #2a7d55;
-  --amber: #c4841a;
-  --amber-ink: #86560a;
-  --red: #a23636;
-  --red-soft: #fbe9e7;
-  --focus: #6a378b;
-  --ticket-edge: drop-shadow(0 0 .5px rgb(90 50 40 / 55%)) drop-shadow(0 1px 1.5px rgb(90 50 40 / 8%));
-  --ticket-lift: drop-shadow(0 0 .5px rgb(90 50 40 / 55%)) drop-shadow(0 4px 8px rgb(90 50 40 / 14%));
-  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23655a6e' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2.5 4.5 3.5 3.5 3.5-3.5'/%3E%3C/svg%3E");
-  --ease-out: cubic-bezier(.2, .8, .2, 1);
-  color: var(--ink);
-  background: var(--canvas);
+  --ticket-edge: drop-shadow(0 0 .5px rgb(31 27 22 / 50%)) drop-shadow(0 1px 1.5px rgb(31 27 22 / 10%));
+  --ticket-lift: drop-shadow(0 0 .5px rgb(31 27 22 / 50%)) drop-shadow(0 4px 7px rgb(31 27 22 / 14%));
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%231f1b16' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2.5 4.5 3.5 3.5 3.5-3.5'/%3E%3C/svg%3E");
+  --gutter: 6px;
+  --ticket-size: 6.25rem;
+  --dock-size: 4.25rem;
+  /* How long the bar's next face waits for the one before it to clear. */
+  --dock-wait: .08s;
 }
-
 @media (prefers-color-scheme: dark) {
   :root {
-    --canvas: #1c1622;
-    --paper: #2a2132;
-    --ink: #f4eef7;
-    --muted: #b9aec2;
-    --faint: #a195ab;
-    --line: rgb(255 255 255 / 10%);
-    --line-strong: rgb(255 255 255 / 20%);
-    --fill: rgb(255 255 255 / 7%);
-    --fill-strong: rgb(255 255 255 / 13%);
-  --thumb: rgb(255 255 255 / 16%);
-    --primary: #f6ad97;
-    --primary-hover: #f9bfad;
-    --on-primary: #2a1a22;
-    --link: #d9bcee;
-    --peach-soft: #45303a;
-    --peach-ink: #f8b9a6;
-    --green: #86d8a8;
-    --green-soft: #1e3a2c;
-    --green-solid: #2f8a5e;
-    --amber: #e0a646;
-    --amber-ink: #ecc078;
-    --red: #f2a09d;
-    --red-soft: #452628;
-    --focus: #cfa9ea;
-    --ticket-edge: drop-shadow(0 0 .5px rgb(255 255 255 / 30%));
-    --ticket-lift: drop-shadow(0 0 .5px rgb(255 255 255 / 30%)) drop-shadow(0 4px 8px rgb(0 0 0 / 35%));
-    --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23b9aec2' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2.5 4.5 3.5 3.5 3.5-3.5'/%3E%3C/svg%3E");
+    --ticket-edge: drop-shadow(0 0 .5px rgb(255 248 230 / 50%));
+    --ticket-lift: drop-shadow(0 0 .5px rgb(255 248 230 / 50%)) drop-shadow(0 4px 7px rgb(0 0 0 / 40%));
+    --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23fbf8ef' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2.5 4.5 3.5 3.5 3.5-3.5'/%3E%3C/svg%3E");
   }
 }
 
-* { box-sizing: border-box; }
+*, ::before, ::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
-.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-body { width: 23.75rem; max-width: 100%; max-height: 600px; margin: 0; display: flex; flex-direction: column; background: var(--canvas); }
-header, nav, footer { flex: none; }
-p, h1, h2 { margin: 0; }
-ol, ul { padding: 0; margin: 0; list-style: none; }
-svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+::selection { background: var(--sun); color: #1f1b16; }
+.visually-hidden { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-/* Header: where you are, and what CartScout found */
-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: .75rem; padding: 1rem 1rem .75rem; }
-.mark { grid-row: 1 / 3; align-self: center; width: 2.25rem; height: 2.25rem; }
-.heading { display: contents; }
-h1 { align-self: end; font-size: 1.0625rem; font-weight: 650; line-height: 1.25; letter-spacing: -.015em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#status { grid-column: 2 / -1; color: var(--muted); font-size: .78125rem; line-height: 1.35; }
-/* Announced, not shown: the basket tools appearing already say where you are. */
-#basket-marker { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-
-/* Controls */
-button, select { font: inherit; font-size: .8125rem; font-weight: 600; color: var(--ink); }
-button { min-height: 2.25rem; padding: 0 1rem; border: 0; border-radius: 99px; cursor: pointer; touch-action: manipulation; transition: background-color .15s, color .15s, transform .1s ease-out; }
-button:focus-visible, a:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-button:disabled { cursor: wait; opacity: .55; }
-.primary { background: var(--primary); color: var(--on-primary); }
-.primary:not(:disabled):hover { background: var(--primary-hover); }
-.secondary { background: none; box-shadow: inset 0 0 0 1px var(--line-strong); }
-.secondary:not(:disabled):hover { background: var(--fill); }
-.quiet { min-height: 2rem; padding: 0 .5rem; background: none; color: var(--link); }
-.quiet:not(:disabled):hover { background: var(--fill); }
-.icon-button { flex: none; display: grid; place-items: center; width: 2rem; min-height: 2rem; padding: 0; border-radius: 50%; background: none; color: var(--muted); }
-.icon-button:not(:disabled):hover { background: var(--fill); color: var(--ink); }
-.icon-button svg { width: 1.125rem; height: 1.125rem; }
-a { color: var(--link); text-underline-offset: 3px; overflow-wrap: anywhere; }
-
-/* The two tools, as a segmented control */
-nav { position: relative; display: grid; grid-template-columns: 1fr 1fr; margin: 0 1rem .25rem; padding: 3px; border-radius: 99px; background: var(--fill); }
-nav::before { content: ""; position: absolute; inset: 3px auto 3px 3px; width: calc(50% - 3px); border-radius: 99px; background: var(--thumb); box-shadow: 0 0 0 .5px rgb(0 0 0 / 6%), 0 1px 3px rgb(0 0 0 / 12%); }
-nav:has(#show-alternatives[aria-pressed="true"])::before { transform: translateX(100%); }
-nav button { position: relative; min-height: 1.875rem; padding: 0 .5rem; background: none; color: var(--muted); }
-nav button[aria-pressed="true"] { color: var(--ink); }
-nav button:not([aria-pressed="true"]):hover { color: var(--ink); }
-
-main { flex: 0 1 auto; min-height: 0; padding: .75rem 1rem 1rem; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--fill-strong) transparent; mask-image: linear-gradient(#0000, #000 .625rem calc(100% - .75rem), #0000); }
-
-/* Checkout: the one salient action on a basket */
-.checkout { display: grid; gap: .625rem; margin-bottom: .875rem; }
-#checkout-status { color: var(--muted); font-size: .8125rem; font-variant-numeric: tabular-nums; }
-#checkout-status:empty { display: none; }
-#checkout-progress { appearance: none; display: block; width: 100%; height: .375rem; overflow: hidden; border: 0; border-radius: 99px; background: var(--fill-strong); }
-#checkout-progress::-webkit-progress-bar { background: none; }
-#checkout-progress::-webkit-progress-value { border-radius: 99px; background: var(--primary); transition: inline-size .3s var(--ease-out); }
-.checkout .actions { display: flex; gap: .5rem; }
-.checkout .actions:not(:has(button:not([hidden]))) { display: none; }
-.checkout .actions button { flex: 1; min-height: 2.5rem; font-size: .875rem; }
-/* While codes are being tried, Stop is the only action worth showing. */
-.checkout .actions:has(#stop-codes:not([hidden])) #try-codes { display: none; }
-
-/* Saved: one number, then the receipt. Colour only where the money is. */
-#checkout-savings { padding-top: .5rem; }
-.saved-hero { font-size: 1.375rem; font-weight: 600; line-height: 1.2; letter-spacing: -.02em; text-align: center; }
-.saved-hero strong { color: var(--green); font-weight: 700; font-variant-numeric: tabular-nums; }
-.receipt { display: grid; gap: .5rem; margin: 1rem 0 0; padding: .75rem 0; border-block: 1px solid var(--line); font-size: .8125rem; }
-.receipt div { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.receipt dt { color: var(--muted); }
-.receipt dd { display: inline-flex; align-items: center; gap: .375rem; min-width: 0; margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.receipt svg { flex: none; width: 1rem; height: 1rem; }
-#saved-code { font: 700 .8125rem/1.3 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .01em; }
-#saved-after { color: var(--green); font-weight: 700; }
-/* The receipt already says it; the sentence stays for screen readers. */
-#checkout-savings:not([hidden]) + #checkout-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-
-/* Coupons: perforated tickets. The whole ticket is the copy button. */
-#coupons { display: grid; gap: .5rem; }
-.coupon { display: grid; }
-.coupon-main { --report-width: 6.75rem; container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr) 0rem; }
-.coupon-main[data-report-ready] { grid-template-columns: minmax(0, 1fr) var(--report-width); }
-.report-panel { display: grid; align-items: center; min-width: 0; overflow: hidden; opacity: 0; }
-.coupon-main[data-report-ready] .report-panel { opacity: 1; }
-.coupon-ticket {
-  --stub: 4.5rem;
-  --notch: .4375rem;
-  --ticket-paper: var(--paper);
-  --ticket-stub: var(--peach-soft);
-  --ticket-accent: var(--peach-ink);
+html, body { inline-size: 25rem; block-size: var(--stage-block, 37rem); margin: 0; overflow: hidden; }
+body {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--stub);
-  width: 100%;
-  min-height: 4.5rem;
-  padding: 0;
-  border-radius: .875rem;
-  background: none;
-  text-align: start;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  background: var(--canvas);
+  color: var(--ink);
+  font: 600 .84375rem/1.45 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  caret-color: var(--sun-deep);
+}
+p, h1, h2, h3 { margin: 0; }
+ol, ul { margin: 0; padding: 0; list-style: none; }
+/* Brand buttons keep the label type brand.css gives them; everything else inherits the body's.
+   The reset carries no weight of its own, so a class such as .quiet or .icon-button always has the last word. */
+:where(button:not(.primary, .secondary), select, input) { font: inherit; color: inherit; }
+svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+a { color: inherit; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+[tabindex="-1"]:focus { outline: none; }
+
+/* Two or three labels in one grid cell, so a changing label never changes its button's width.
+   The label that shows inherits its visibility, so one inside a hidden face is never seen or pressed. */
+.swap { display: inline-grid; justify-items: center; }
+.swap > * { grid-area: 1 / 1; opacity: 0; visibility: hidden; transition: opacity var(--quick), visibility var(--quick); }
+.swap:not([data-show]) > :first-child,
+.swap[data-show="1"] > :nth-child(1),
+.swap[data-show="2"] > :nth-child(2),
+.swap[data-show="3"] > :nth-child(3) { opacity: 1; visibility: inherit; }
+
+.quiet { min-block-size: 2rem; padding: 0 .5rem; border: 0; border-radius: var(--radius-s); background: none; color: var(--ink); font-size: .78125rem; font-weight: 800; cursor: pointer; text-decoration: underline; text-decoration-color: var(--sun-deep); text-decoration-thickness: 2px; text-underline-offset: 4px; transition: background-color var(--quick); }
+/* An underline does not reach into a .swap (an inline grid), so a quiet button's swapped labels draw their own. */
+.quiet .swap > * { text-decoration: underline 2px var(--sun-deep); text-underline-offset: 4px; }
+.quiet:not(:disabled, [aria-disabled="true"]):hover { background: var(--fill); }
+.quiet:active { background: var(--fill-strong); }
+.icon-button { display: grid; place-items: center; inline-size: 2rem; block-size: 2rem; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; transition: background-color var(--quick), color var(--quick), rotate var(--slow) var(--ease-out); }
+.icon-button:not(:disabled, [aria-disabled="true"]):hover { background: var(--fill); color: var(--ink); }
+:is(.icon-button, .quiet):is(:disabled, [aria-disabled="true"]) { cursor: progress; }
+
+/* Header: Scout, shop title + status, and top-right plan/account cluster. */
+.masthead { display: grid; grid-template-columns: 2.75rem minmax(0, 1fr) auto; column-gap: .75rem; align-items: center; padding: 1rem 1.25rem .875rem; }
+.mark { align-self: center; --scout-size: 2.75rem; }
+.mast-title { display: grid; gap: .125rem; min-inline-size: 0; }
+h1 { font-size: 1.0625rem; font-weight: 800; line-height: 1.3; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#status { color: var(--muted); font-size: .78125rem; line-height: 1.25; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mast-account { display: grid; justify-items: end; gap: .1875rem; flex: none; }
+.mast-controls { display: flex; align-items: center; gap: .25rem; }
+.mast-controls .icon-button { inline-size: 1.75rem; block-size: 1.75rem; }
+.plan-pill { display: inline-grid; place-items: center; min-inline-size: 2.75rem; block-size: 1.5rem; padding: 0 .625rem; border: 0; border-radius: var(--radius-pill); background: var(--fill-strong); color: var(--ink); font-size: .75rem; font-weight: 800; line-height: 1; cursor: pointer; transition: background-color var(--quick), color var(--quick), filter var(--quick); }
+.plan-pill:hover { filter: brightness(.95); }
+.plan-pill[data-plan="pro"] { background: #1f1b16; color: #ffd23f; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.plan-pill[data-plan="pro"]:hover { filter: brightness(1.15); }
+.plan-pill[data-plan="unknown"] { opacity: .6; }
+.mast-meta { display: flex; align-items: baseline; justify-content: flex-end; gap: .375rem; font-size: .72rem; line-height: 1.2; white-space: nowrap; }
+.account-detail { color: var(--muted); font-variant-numeric: tabular-nums; }
+.account-detail[data-tone="out"] { color: var(--red); font-weight: 800; }
+.mast-upgrade { padding: 0; border: 0; background: none; color: var(--ink); font-size: .72rem; font-weight: 800; cursor: pointer; text-decoration: underline 2px var(--sun-deep); text-underline-offset: 3px; }
+.mast-upgrade:hover { color: var(--sun-deep); }
+
+/* The two tools. The yellow thumb slides; nothing else moves. */
+.tabs { position: relative; display: grid; grid-template-columns: 1fr 1fr; align-self: start; block-size: 2.625rem; margin: 0 1.25rem .875rem; padding: 3px; border-radius: var(--radius-m); background: var(--fill); }
+.tabs::before { content: ""; position: absolute; inset: 3px auto 3px 3px; inline-size: calc(50% - 3px); border-radius: calc(var(--radius-m) - 3px); background: var(--sun); transition: translate var(--base) var(--ease-in-out); }
+.tabs:has(#show-alternatives[aria-selected="true"])::before { translate: 100% 0; }
+.tabs button { position: relative; padding: 0 .5rem; border: 0; border-radius: calc(var(--radius-m) - 3px); background: none; color: var(--muted); font-size: .84375rem; font-weight: 800; cursor: pointer; transition: color var(--base); }
+/* The selected tab is yellow in its own right, timed to the thumb's arrival, so its label always sits on its own colour. */
+.tabs button[aria-selected="true"] { background: var(--sun); color: var(--on-sun); transition: color var(--base), background-color 0s var(--base); }
+.tabs button:not([aria-selected="true"]):hover { color: var(--ink); }
+
+/* Main is the only scroller. Its scrollbar has a fixed width, so the gutter is the same on every machine. */
+/* Clipped, not hidden: the stage itself can never be scrolled, so the pinned bar cannot be nudged off its line. */
+.stage-body { position: relative; min-block-size: 0; overflow: clip; }
+main { position: absolute; inset: 0; overflow: hidden auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
+main { scroll-padding-block-start: .5rem; }
+body[data-dock="on"] main { scroll-padding-block-end: calc(var(--dock-size) + .75rem); }
+main::-webkit-scrollbar { inline-size: var(--gutter); }
+main::-webkit-scrollbar-thumb { border-radius: var(--radius-pill); background: var(--fill-strong); }
+main::-webkit-scrollbar-track { background: none; }
+.view { position: relative; min-block-size: 100%; padding: .25rem calc(1.25rem - var(--gutter)) 1.25rem 1.25rem; }
+#coupon-view { padding-block-start: .25rem; }
+body[data-dock="on"] #coupon-view { padding-block-end: calc(var(--dock-size) + 1rem); }
+
+/* A message that comes and goes over the stage, so the header's summary is never used for passing errors. */
+.notice { position: absolute; inset: .375rem 1rem auto; z-index: 1; padding: .5rem .75rem; border-radius: var(--radius-m); background: var(--ink); color: var(--canvas); font-size: .78125rem; font-weight: 700; line-height: 1.35; text-align: center; text-wrap: balance; box-shadow: var(--shadow-pop); opacity: 0; visibility: hidden; translate: 0 -.5rem; pointer-events: none; transition: opacity var(--base), translate var(--base) var(--ease-out), visibility var(--base); }
+.notice[data-show="true"] { opacity: 1; visibility: visible; translate: 0 0; }
+
+/* Centred states: one large Scout, a headline that stays put, one line, at most one button. */
+.scene { position: absolute; inset: 0; display: grid; justify-items: center; align-content: start; padding: .875rem 1.5rem 0 calc(1.5rem + var(--gutter)); text-align: center; }
+.scene-scout { --scout-size: 5.75rem; }
+/* Every part of a scene has a fixed slot, so a scan that ends cannot move what is already on screen.
+   The scanning line and the button never show together, so they share one slot. */
+.scene { grid-template-areas: "scout" "title" "text" "slot" "foot"; }
+/* Full-width boxes: a shorter sentence must not give the paragraph a new left edge. */
+.scene > :is(.scene-title, .scene-text, .scene-steps, .scene-foot) { inline-size: 100%; }
+.scene-scout { grid-area: scout; }
+.scene-title { grid-area: title; display: grid; align-content: end; min-block-size: 2.3em; margin-block-start: .5rem; max-inline-size: 19rem; overflow-wrap: anywhere; font-size: 1.3125rem; font-weight: 800; line-height: 1.2; letter-spacing: -.01em; text-wrap: balance; }
+.scene-text { grid-area: text; min-block-size: 2.8em; margin-block-start: .375rem; max-inline-size: 19rem; color: var(--muted); text-wrap: balance; }
+.scene-steps { grid-area: slot; align-self: center; block-size: 1.25rem; color: var(--ink); font-weight: 800; white-space: nowrap; }
+.scene-action { grid-area: slot; display: grid; align-content: center; min-block-size: 3rem; margin-block-start: .375rem; }
+.scene-foot { grid-area: foot; min-block-size: 1.75em; margin-block-start: .375rem; max-inline-size: 19rem; color: var(--faint); font-size: .75rem; line-height: 1.35; text-wrap: balance; }
+.scene-peek { position: absolute; inset: 18.75rem 1.25rem .75rem 1.25rem; display: grid; align-content: start; gap: .625rem; overflow: hidden; text-align: start; }
+.scene-peek:empty { display: none; }
+
+/* Scanning ticket conveyor: tickets scroll up one by one — some tear off along the perforation, some make it through! */
+.conveyor {
+  position: relative;
+  inline-size: 100%;
+  block-size: 100%;
+  min-block-size: 9.5rem;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 16%, #000 84%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 16%, #000 84%, transparent 100%);
+}
+.conveyor-ticket {
+  position: absolute;
+  inset: 0 .25rem auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.25rem;
+  block-size: 4.125rem;
+  opacity: 0;
+  will-change: transform, opacity;
   filter: var(--ticket-edge);
-  transition: --ticket-paper .2s, --ticket-stub .2s, filter .2s, transform .1s ease-out;
+}
+.ct-body {
+  position: relative;
+  display: grid;
+  align-content: center;
+  gap: .4375rem;
+  padding: .625rem .875rem;
+  border-radius: var(--radius-m) .25rem .25rem var(--radius-m);
+  background: var(--paper);
+  border-inline-end: 2px dashed var(--line-strong);
+  will-change: transform, opacity;
+}
+.ct-stub {
+  display: grid;
+  place-items: center;
+  border-radius: .25rem var(--radius-m) var(--radius-m) .25rem;
+  background: var(--sun);
+  color: var(--on-sun);
+  will-change: transform, opacity, background-color;
+}
+.ct-stub svg { stroke-width: 2.5; opacity: 0; scale: .6; }
+.ct-bar { display: block; border-radius: .25rem; background: var(--fill-strong); }
+.ct-code { block-size: .8125rem; }
+.ct-offer { block-size: .5rem; opacity: .7; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .conveyor-ticket.is-tear {
+    animation: ct-ride-tear 4.6s cubic-bezier(.35, .05, .25, 1) var(--delay, 0s) infinite;
+  }
+  .conveyor-ticket.is-tear .ct-body {
+    animation: ct-body-tear 4.6s ease-in-out var(--delay, 0s) infinite;
+  }
+  .conveyor-ticket.is-tear .ct-stub {
+    transform-origin: 0 20%;
+    animation: ct-stub-rip 4.6s cubic-bezier(.4, 0, .6, 1) var(--delay, 0s) infinite;
+  }
+  .conveyor-ticket.is-tear .ct-stub svg {
+    animation: ct-icon-pop 4.6s ease-out var(--delay, 0s) infinite;
+  }
+
+  .conveyor-ticket.is-keep {
+    animation: ct-ride-keep 4.6s cubic-bezier(.35, .05, .25, 1) var(--delay, 0s) infinite;
+  }
+  .conveyor-ticket.is-keep .ct-stub {
+    animation: ct-stub-win 4.6s ease-out var(--delay, 0s) infinite;
+  }
+  .conveyor-ticket.is-keep .ct-stub svg {
+    animation: ct-icon-win 4.6s cubic-bezier(.34, 1.5, .64, 1) var(--delay, 0s) infinite;
+  }
+}
+
+@keyframes ct-ride-tear {
+  0%   { transform: translateY(10.5rem) scale(.96); opacity: 0; }
+  14%  { opacity: 1; }
+  38%  { transform: translateY(3.1rem) scale(1); opacity: 1; }
+  54%  { transform: translateY(2.6rem) scale(1); opacity: 1; }
+  78%  { transform: translateY(1.2rem) scale(.97); opacity: 0; }
+  100% { transform: translateY(1.2rem) scale(.97); opacity: 0; }
+}
+@keyframes ct-body-tear {
+  0%, 48% { transform: translate(0, 0) rotate(0deg); }
+  62%     { transform: translate(-5px, -2px) rotate(-2.5deg); }
+  80%, 100% { transform: translate(-14px, 6px) rotate(-6deg); opacity: .2; }
+}
+@keyframes ct-stub-rip {
+  0%, 45% { transform: translate(0, 0) rotate(0deg); background: var(--sun); color: var(--on-sun); opacity: 1; }
+  52%     { transform: translate(4px, 2px) rotate(6deg); background: var(--red-soft); color: var(--red); opacity: 1; }
+  74%     { transform: translate(26px, 44px) rotate(32deg); background: var(--red-soft); color: var(--red); opacity: 0; }
+  100%    { transform: translate(26px, 44px) rotate(32deg); opacity: 0; }
+}
+@keyframes ct-icon-pop {
+  0%, 42%   { opacity: 0; scale: .5; }
+  50%, 66%  { opacity: 1; scale: 1; }
+  76%, 100% { opacity: 0; scale: .8; }
+}
+
+@keyframes ct-ride-keep {
+  0%   { transform: translateY(10.5rem) scale(.96); opacity: 0; }
+  14%  { opacity: 1; }
+  40%  { transform: translateY(3rem) scale(1); opacity: 1; }
+  52%  { transform: translateY(2.7rem) scale(1.03); opacity: 1; }
+  84%  { transform: translateY(-4.5rem) scale(.98); opacity: 0; }
+  100% { transform: translateY(-4.5rem) scale(.98); opacity: 0; }
+}
+@keyframes ct-stub-win {
+  0%, 42%   { background: var(--sun); color: var(--on-sun); }
+  50%, 100% { background: var(--green-solid); color: #fff; }
+}
+@keyframes ct-icon-win {
+  0%, 44%   { opacity: 0; scale: .4; }
+  54%, 100% { opacity: 1; scale: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conveyor-ticket:nth-child(1) { transform: translateY(.5rem); opacity: .85; }
+  .conveyor-ticket:nth-child(2) { transform: translateY(5.25rem); opacity: .55; }
+}
+
+/* Coupons: perforated tickets, printed like a real coupon. The whole ticket is the copy button. */
+.ticket-list { display: grid; gap: .75rem; padding-block-start: 0; }
+.coupon { display: grid; }
+.subhead { display: flex; align-items: center; gap: .5rem; block-size: 1rem; margin-block-end: -.25rem; padding-inline: .125rem; color: var(--muted); font-size: .75rem; font-weight: 800; line-height: 1rem; white-space: nowrap; }
+.subhead::after { content: ""; flex: 1; border-block-start: 1px solid var(--line); }
+.subhead:not(:first-child) { margin-block-start: .5rem; }
+.list-note { display: flex; align-items: center; justify-content: space-between; gap: .5rem; block-size: 2rem; margin-block: 0 -.125rem; padding-inline-start: .125rem; color: var(--muted); font-size: .75rem; line-height: 1.3; }
+.list-note span { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-note .quiet { flex: none; margin-inline-end: -.375rem; font-size: .75rem; }
+/* What comes after the tickets: the offer of a scan, a scan in progress, or one calm closing line. */
+.list-tail { display: grid; justify-items: center; align-content: start; gap: .5rem; padding: .75rem .5rem .25rem; color: var(--muted); font-size: .75rem; line-height: 1.4; text-align: center; text-wrap: balance; }
+.list-tail:is([data-kind="scan"], [data-kind="scanning"]) { min-block-size: 4.5rem; }
+.list-tail[data-kind="scan"] { padding-inline: 0; }
+.list-tail .secondary { inline-size: 100%; min-block-size: 2.625rem; font-size: .875rem; font-weight: 800; }
+.list-tail .lead { margin-block-start: .125rem; color: var(--ink); font-size: .875rem; font-weight: 800; line-height: 1.25rem; }
+.list-tail .quiet { min-block-size: 2rem; }
+.ticket {
+  --stub: 5.5rem;
+  --notch: .4375rem;
+  --ticket-paper: var(--paper);
+  --ticket-stub: var(--sun);
+  --stub-ink: var(--on-sun);
+  --perforation: var(--line-strong);
+  position: relative;
+  block-size: var(--ticket-size);
+  filter: var(--ticket-edge);
+  transition: --ticket-paper var(--base), --ticket-stub var(--quick), filter var(--base), translate var(--quick) var(--ease-out);
 }
 /* The paper sits on its own layer so the notches are real cut-outs and the focus ring stays whole. */
-.coupon-ticket::before {
+.ticket::before {
   content: "";
   position: absolute;
   inset: 0;
-  z-index: -1;
-  border-radius: inherit;
+  border-radius: var(--radius-m);
   background: linear-gradient(to right, var(--ticket-paper) calc(100% - var(--stub)), var(--ticket-stub) 0);
   mask:
     radial-gradient(circle at calc(100% - var(--stub)) 0, #0000 var(--notch), #000 calc(var(--notch) + .5px)) top / 100% 51% no-repeat,
     radial-gradient(circle at calc(100% - var(--stub)) 100%, #0000 var(--notch), #000 calc(var(--notch) + .5px)) bottom / 100% 51% no-repeat;
 }
-.coupon-ticket:hover { filter: var(--ticket-lift); }
-/* Size text for the revealed ticket so opening the rail only moves the stub. */
-.ticket-content { display: grid; align-content: center; gap: .1875rem; min-width: 0; width: max(0px, 100cqi - var(--stub) - var(--report-width)); padding: .75rem .875rem .75rem 1rem; transition: opacity .2s; }
-.code-line { display: grid; font: 650 1.1875rem/1.2 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .01em; overflow-wrap: anywhere; }
-.code-line > span { grid-area: 1 / 1; }
-.copied-label { visibility: hidden; color: var(--green); }
-.offer { color: var(--muted); font-size: .8125rem; font-weight: 450; line-height: 1.35; overflow-wrap: anywhere; }
-.offer:empty { display: none; }
-.ticket-stub { position: relative; display: grid; place-content: center; justify-items: center; gap: .25rem; color: var(--ticket-accent); font-size: .6875rem; font-weight: 650; letter-spacing: .01em; transition: color .2s; }
-/* Perforation between the two notches */
-.ticket-stub::before { content: ""; position: absolute; inset: calc(var(--notch) + .3125rem) auto calc(var(--notch) + .3125rem) -1px; width: 2px; background: radial-gradient(circle, var(--line-strong) 1px, #0000 1.2px) center top / 2px 6px repeat-y; }
-.ticket-icon { display: grid; width: 1.25rem; height: 1.25rem; }
-.ticket-icon svg { grid-area: 1 / 1; }
-.icon-check { stroke-width: 2.2; opacity: 0; scale: .6; }
+/* Perforation between the two notches: punched dots, evenly spaced from notch to notch. */
+.ticket::after { content: ""; position: absolute; inset: calc(var(--notch) + .25rem) calc(var(--stub) - 1.5px) calc(var(--notch) + .25rem) auto; inline-size: 3px; background: radial-gradient(circle, var(--perforation) 1.1px, #0000 1.5px) center / 3px 6px space; pointer-events: none; transition: opacity var(--quick); }
+/* The stub is the sticker: bright yellow on a code nobody has used yet, soft once it has been copied.
+   Hover lifts the ticket and brightens the part you tear off; a press sinks it. */
+.ticket:is([data-stub="ask"], [data-stub="answered"]) { --ticket-stub: var(--sun-soft); --stub-ink: var(--ink); }
+.ticket[data-stub="copy"]:has(.ticket-copy:hover) { --ticket-stub: var(--sun-bright); }
+.ticket:has(.ticket-copy:hover) { filter: var(--ticket-lift); translate: 0 -1px; }
+.ticket:has(.ticket-copy:active) { translate: 0 1px; filter: var(--ticket-edge); }
+.ticket[data-stub="copy"]:has(.ticket-copy:active) { --ticket-stub: var(--sun-deep); }
+.ticket-copy { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) var(--stub); inline-size: 100%; padding: 0; border: 0; border-radius: var(--radius-m); background: none; text-align: start; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.ticket-copy:focus-visible { outline-offset: 1px; }
+/* Three parts, always the same height: the code, two lines of offer, one line of small print. */
+.ticket-content { display: grid; grid-template-rows: 1.5rem 2.125rem 1.0625rem; align-content: center; row-gap: .25rem; min-inline-size: 0; padding: .5rem .875rem .5rem 1rem; }
+.code-line { display: grid; grid-template-columns: minmax(0, auto) 1fr; align-items: center; column-gap: .375rem; min-inline-size: 0; }
+.code, .copied-label { grid-row: 1; min-inline-size: 0; font: 800 1.1875rem/1.5rem var(--font-code); letter-spacing: .04em; white-space: nowrap; transition: opacity var(--quick), translate var(--base) var(--ease-out), color var(--base); }
+.code { grid-column: 1; overflow: hidden; text-overflow: ellipsis; }
+.code[data-size="2"] { font-size: .9375rem; }
+.code[data-size="3"] { font-size: .875rem; letter-spacing: .01em; }
+.code[data-size="4"] { font-size: .75rem; letter-spacing: -.03em; }
+.copied-label { grid-column: 1 / -1; color: var(--green); font-family: var(--font-ui); font-size: 1.0625rem; letter-spacing: 0; opacity: 0; translate: 0 .375rem; }
+/* A tick punched beside a code other members confirmed: a shape, not only a colour. */
+.proof { grid-area: 1 / 2; color: var(--green); stroke-width: 1.8; opacity: 0; scale: .6; transition: opacity var(--base), scale var(--base) var(--ease-pop); }
+.coupon[data-working] .proof { opacity: 1; scale: 1; }
+.coupon[data-working] .ticket { --perforation: var(--green-solid); }
+.offer { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; block-size: 2rem; color: var(--ink); font-size: .8125rem; font-weight: 700; line-height: 1rem; overflow-wrap: anywhere; transition: opacity var(--base); }
+.offer[data-none] { color: var(--faint); font-weight: 600; }
+.fine { display: flex; align-items: center; gap: .3125rem; min-inline-size: 0; block-size: 1rem; color: var(--faint); font-size: .75rem; font-weight: 700; line-height: 1rem; white-space: nowrap; }
+.thumbs { flex: none; display: inline-flex; align-items: center; gap: .375rem; color: var(--muted); }
+.thumb { display: inline-flex; align-items: center; gap: .125rem; }
+.thumb svg { flex: none; translate: 0 -.5px; }
+.thumb.down svg { translate: 0 .5px; }
+.count { min-inline-size: .5rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.thumbs[data-lead="up"] .thumb.up { color: var(--green); }
+.thumbs[data-alone="true"] .fine-dot { display: none; }
+.provenance { display: flex; gap: .3125rem; min-inline-size: 0; }
+.provenance .where { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; }
+.provenance .when { flex: none; }
 
-.coupon[data-trial-state="applied"] .coupon-ticket { --ticket-stub: var(--green-soft); --ticket-accent: var(--green); }
-.coupon[data-trial-state="applied"] .code { color: var(--green); }
-.coupon[data-trial-state="rejected"] .ticket-content { opacity: .55; }
+/* The stub holds one of four faces in the same box: copy, copied, the question, the answer. */
+.stub-face { position: absolute; inset: 0 0 0 auto; inline-size: var(--stub); display: grid; place-content: center; justify-items: center; gap: .25rem; color: var(--stub-ink); font-size: .8125rem; font-weight: 800; line-height: 1.2; opacity: 0; scale: .86; transition: opacity var(--quick), scale var(--base) var(--ease-pop), color var(--quick); }
+.stub-copy svg { stroke-width: 1.8; }
+.stub-ask { gap: .3125rem; font-size: .75rem; visibility: hidden; transition: opacity var(--quick), scale var(--base) var(--ease-pop), visibility var(--quick); }
+.ticket[data-stub="copy"] .stub-copy,
+.ticket[data-stub="copied"] .stub-copied,
+.ticket:is([data-stub="ask"], [data-stub="answered"]) .stub-ask { opacity: 1; scale: 1; visibility: inherit; }
+.ticket[data-stub="copied"] { --ticket-stub: var(--green-solid); }
+.ticket[data-stub="copied"] .code { opacity: 0; translate: 0 -.375rem; }
+.ticket[data-stub="copied"] .proof { opacity: 0; }
+.ticket[data-stub="copied"] .copied-label { opacity: 1; translate: 0 0; }
+.stub-copied { color: #fff; }
+.stub-copied svg { stroke-width: 2.6; }
+.tick { stroke-dasharray: 1; stroke-dashoffset: 1; }
+.ticket[data-stub="copied"] .tick { stroke-dashoffset: 0; transition: stroke-dashoffset .32s .06s var(--ease-out); }
+.ask-buttons { display: flex; gap: .375rem; }
+.vote { display: grid; place-items: center; inline-size: 2rem; block-size: 2rem; padding: 0; border: 0; border-radius: 50%; background: var(--canvas); box-shadow: inset 0 0 0 2px var(--edge); color: var(--ink); cursor: pointer; transition: background-color var(--quick), color var(--quick), opacity var(--base), scale var(--quick) var(--ease-out), box-shadow var(--quick); }
+.vote:hover { background: var(--surface); box-shadow: inset 0 0 0 2px var(--line-strong); }
+.vote:active { scale: .9; }
+.ticket[aria-busy="true"] .vote { cursor: progress; }
+.vote.worked[aria-pressed="true"] { background: var(--green-solid); box-shadow: none; color: #fff; }
+.vote.failed[aria-pressed="true"] { background: var(--ink); box-shadow: none; color: var(--canvas); }
+.vote[aria-pressed="true"] svg { fill: currentColor; fill-opacity: .28; }
+.ticket[data-stub="answered"] .vote[aria-pressed="false"] { opacity: .6; }
+.ticket[data-stub="answered"] .vote[aria-pressed="false"]:is(:hover, :focus-visible) { opacity: 1; }
+.ticket[data-answer="yes"]:is([data-stub="ask"], [data-stub="answered"]) { --ticket-stub: var(--green-soft); }
+.ticket[data-answer="no"]:is([data-stub="ask"], [data-stub="answered"]) { --ticket-stub: var(--fill-strong); }
 
-/* Copied: the stub turns solid green with a tick, and the code reads “Copied”. */
-.coupon .coupon-ticket[data-copied] { --ticket-stub: var(--green-solid); --ticket-accent: #fff; }
-.coupon-ticket[data-copied] .code { visibility: hidden; }
-.coupon-ticket[data-copied] .copied-label { visibility: visible; }
-.coupon-ticket[data-copied] .icon-copy { opacity: 0; scale: .6; }
-.coupon-ticket[data-copied] .icon-check { opacity: 1; scale: 1; }
-.coupon-ticket[data-copied] .ticket-icon { translate: 0 .5rem; scale: 1.3; }
-.coupon-ticket[data-copied] .ticket-action { opacity: 0; }
+/* What the checkout run found, on the ticket it happened to. */
+.coupon[data-trial="applied"] .ticket { --ticket-paper: var(--green-soft); }
+.coupon[data-trial="applied"] .code { color: var(--green); }
+.coupon[data-trial="applied"] .provenance { color: var(--green); font-weight: 800; }
+.coupon:is([data-trial="rejected"], [data-trial="error"]) :is(.code, .offer:not([data-none])) { opacity: .62; }
+.coupon[data-trial="rejected"] .code { text-decoration: line-through; text-decoration-thickness: 2px; }
+.coupon:is([data-trial="rejected"], [data-trial="error"]) .provenance { color: var(--red); }
+/* A code this basket turned down no longer wears the tick or the green tear line, whatever others said. */
+.coupon:is([data-trial="rejected"], [data-trial="error"]) .proof { opacity: 0; }
+.coupon:is([data-trial="rejected"], [data-trial="error"]) .ticket { --perforation: var(--line-strong); }
 
-.trial-result { display: flex; align-items: center; gap: .375rem; margin: .4375rem .25rem 0; font-size: .75rem; font-weight: 600; }
-.coupon[data-trial-state="applied"] .trial-result { color: var(--green); }
-.coupon[data-trial-state="applied"] .trial-result::before { content: "✓" / ""; }
-.coupon[data-trial-state="rejected"] .trial-result { color: var(--red); }
-.coupon[data-trial-state="rejected"] .trial-result::before { content: "✕" / ""; }
+/* Skeletons share the geometry of what replaces them. */
+.bone { display: block; border-radius: .25rem; background: var(--fill-strong); }
+.skeleton .ticket { filter: none; }
+.skeleton .ticket::before { background: var(--surface); }
+.skeleton .ticket::after { opacity: .5; }
+.skeleton .ticket .bone { position: absolute; }
+.bone-code { inset: .8125rem auto auto .875rem; inline-size: 6.5rem; block-size: 1.0625rem; }
+.bone-offer { inset: 2.4375rem auto auto .875rem; inline-size: 11rem; block-size: .5625rem; }
+.bone-offer-2 { inset: 3.4375rem auto auto .875rem; inline-size: 7.5rem; block-size: .5625rem; }
+.bone-fine { inset: 4.625rem auto auto .875rem; inline-size: 8.5rem; block-size: .5rem; }
+.bone-stub { inset: 2.5rem 1.5rem auto auto; inline-size: 2.5rem; block-size: .75rem; }
+.coupon.skeleton:nth-child(2) .bone-code { inline-size: 5rem; }
+.coupon.skeleton:nth-child(2) .bone-offer-2 { inline-size: 5rem; }
+.coupon.skeleton:nth-child(3) .bone-code { inline-size: 7.5rem; }
+.coupon.skeleton:nth-child(3) .bone-offer { inline-size: 9rem; }
 
-.votes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .375rem; width: var(--report-width); padding: .375rem .25rem .375rem .625rem; text-align: center; }
-.votes-label { grid-column: 1 / -1; color: var(--ink); font-size: .75rem; font-weight: 600; }
-.votes button { min-height: 2rem; padding: 0 .25rem; border-radius: 99px; font-size: .75rem; }
-.votes .worked[aria-pressed="true"] { background: var(--green-soft); box-shadow: inset 0 0 0 1px var(--green-solid); color: var(--green); }
-.votes .failed[aria-pressed="true"] { background: var(--red-soft); box-shadow: inset 0 0 0 1px var(--red); color: var(--red); }
+/* The pinned bar: one compact box, the same height on every shop. On a supported basket it holds the one yellow
+   button; elsewhere one quiet line; then the run and its outcome. It sits over the list on its own layer, and the
+   top edge doubles as the run's progress line. */
+.dock { position: absolute; inset: auto 0 0 0; block-size: var(--dock-size); border-block-start: 1px solid var(--line); background: var(--canvas); translate: 0 100%; visibility: hidden; transition: translate var(--slow) var(--ease-out), visibility var(--slow); }
+.dock:not([data-dock="off"]) { translate: 0 0; visibility: visible; }
+/* A face that is not showing is not seen, read or pressed: hidden here, and inert from popup-run.js.
+   The face that leaves clears quickly and the next one waits for it, so two faces are never read through each other. */
+.dock-face { position: absolute; inset: 0; display: grid; align-content: center; padding: 0 1.25rem; opacity: 0; visibility: hidden; pointer-events: none; translate: 0 .375rem; transition: opacity var(--quick), translate var(--base) var(--ease-out), visibility var(--quick); }
+.dock[data-dock="cta"] .dock-cta,
+.dock[data-dock="goto"] .dock-goto,
+.dock[data-dock="info"] .dock-info,
+.dock[data-dock="leaving"] .dock-leaving,
+.dock[data-dock="trying"] .dock-trying,
+.dock[data-dock="outcome"] .dock-outcome { opacity: 1; visibility: visible; pointer-events: auto; translate: 0 0; transition: opacity var(--base) var(--dock-wait), translate var(--base) var(--ease-out) var(--dock-wait), visibility 0s; }
+.dock-cta, .dock-goto { padding-block-end: .1875rem; }
+.dock-wide { inline-size: 100%; min-block-size: 2.5rem; padding-inline: .5rem; }
+.dock-goto .dock-wide { font-size: .875rem; font-weight: 800; }
+.dock-note { color: var(--muted); font-size: .75rem; line-height: 1.35; font-variant-numeric: tabular-nums; }
+.dock-info { justify-items: center; }
+.dock-info .dock-note { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-inline-size: 19rem; text-align: center; text-wrap: balance; }
+.dock-leaving { justify-items: center; gap: .0625rem; }
+.dock-leaving .dock-note { max-inline-size: 100%; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-headline { font-size: .9375rem; font-weight: 800; line-height: 1.25; letter-spacing: -.005em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-trying, .dock-outcome { grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: .75rem; }
+.dock-outcome { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: .375rem; }
+.dock-copy { display: grid; gap: .0625rem; min-inline-size: 0; }
+.dock-code { font: 800 1rem/1.3 var(--font-code); letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-button { min-block-size: 2.25rem; padding: 0 .75rem; font-size: .8125rem; font-weight: 800; }
+/* Anything but a saving reads as one short paragraph: what happened in bold, then why. */
+.dock:not([data-outcome="saved"]) .dock-outcome .dock-copy { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font-size: .75rem; line-height: .9375rem; }
+.dock:not([data-outcome="saved"]) .dock-outcome :is(.dock-headline, .dock-note) { display: inline; font-size: inherit; line-height: inherit; letter-spacing: 0; white-space: normal; }
+.dock[data-outcome="saved"] .dock-headline { font-size: 1.25rem; font-weight: 900; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.dock[data-outcome="saved"] #run-detail { color: var(--green); font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock:is([data-outcome="saved"], [data-outcome="applied"]) #run-again,
+.dock:not([data-outcome="saved"], [data-outcome="applied"]) #run-done,
+.dock:is([data-outcome="saved"], [data-outcome="applied"]) #run-dismiss { display: none; }
+.run-bar { position: absolute; inset: -1px 0 auto; block-size: 3px; background: var(--fill-strong); overflow: hidden; }
+.run-bar span { display: block; block-size: 100%; background: var(--sun); transform-origin: 0 50%; scale: var(--progress, 0) 1; transition: scale var(--slow) var(--ease-out); }
 
-/* Nothing to show yet: scan, retry, or no codes */
-.empty-state { display: grid; justify-items: center; gap: .75rem; padding: 1.25rem 1rem .5rem; text-align: center; }
-.empty-state:not(:has(> :is(p, button):not([hidden]))), [aria-busy="true"] > .empty-state { display: none; }
-.empty-art { width: 4.5rem; height: 2.75rem; fill: var(--paper); stroke: var(--peach); stroke-width: 1.5; stroke-dasharray: 3 3.5; }
-.empty-art-tear { stroke-dasharray: .1 4; }
-.empty { color: var(--muted); font-size: .8125rem; text-wrap: balance; }
-.empty-state button { min-width: 12rem; min-height: 2.5rem; }
-#coupon-view[aria-busy="true"] #coupons:empty::before, #coupon-view[aria-busy="true"] #coupons:empty::after,
-#alternatives[aria-busy="true"] #alternative-results::after { content: ""; display: block; height: 4.5rem; border-radius: .875rem; background: var(--fill); }
-#alternatives[aria-busy="true"] #alternative-results::after { margin-top: 1rem; }
-
-/* Other retailers */
-.market-row { display: flex; gap: .5rem; }
-.market-row select { flex: 1; min-width: 0; min-height: 2.25rem; padding: 0 2rem 0 .875rem; appearance: none; border: 0; border-radius: 99px; background: var(--chevron) right .75rem center / .75rem no-repeat; box-shadow: inset 0 0 0 1px var(--line-strong); text-overflow: ellipsis; }
-#alternatives-status:not(:empty) { margin-top: .625rem; color: var(--muted); font-size: .75rem; }
-#more-alternatives { width: 100%; margin-top: .75rem; }
-#alternative-results > section { margin-top: 1.125rem; }
-#alternative-results h2 { font-size: .875rem; font-weight: 650; line-height: 1.3; letter-spacing: -.005em; overflow-wrap: anywhere; }
-#alternative-results .variant { color: var(--muted); font-size: .75rem; }
-#alternative-results .empty { margin-top: .25rem; font-size: .75rem; }
-#alternative-results ul { margin-top: .5rem; border-block: 1px solid var(--line); }
-#alternative-results ul:empty { display: none; }
-.retailer-offer { position: relative; margin-inline: -.5rem; padding: .6875rem .5rem .75rem; border-radius: .625rem; }
-.retailer-offer + .retailer-offer::before { content: ""; position: absolute; inset: 0 .5rem auto; border-top: 1px solid var(--line); }
-.retailer-offer:hover { background: var(--fill); }
-.retailer-offer:has(.retailer-link:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
-.retailer-link { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; color: inherit; text-decoration: none; }
+/* Other retailers. One layout on a basket, a product page or any other shop:
+   what is on this page, one form row, one line of status, Scout's verdict, then the offers. */
+.page-product { display: flex; align-items: baseline; gap: .375rem; block-size: 1.5rem; margin-block-end: .375rem; font-size: .78125rem; line-height: 1.5rem; white-space: nowrap; }
+.page-label { flex: none; color: var(--faint); }
+.page-name { flex: 1; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 800; }
+.page-name.quiet-text { color: var(--muted); font-weight: 600; }
+.page-price { flex: none; color: var(--ink); font-weight: 800; font-variant-numeric: tabular-nums; }
+.compare-form { display: grid; grid-template: 1.125rem 2.75rem / minmax(0, 1fr) 4.125rem 7.25rem; gap: .25rem .5rem; padding-block-end: .375rem; }
+.compare-form label { padding-inline-start: .125rem; color: var(--muted); font-size: .75rem; font-weight: 800; line-height: 1.125rem; white-space: nowrap; }
+.compare-form input { min-inline-size: 0; inline-size: 100%; block-size: 2.75rem; padding: 0 .75rem; border: 0; border-radius: var(--radius-m); background: var(--canvas); box-shadow: inset 0 0 0 2px var(--edge); font-weight: 700; text-overflow: ellipsis; transition: box-shadow var(--quick), background-color var(--quick); }
+.compare-form input::placeholder { color: var(--faint); font-weight: 600; opacity: 1; }
+.compare-form input:hover { background: var(--surface); }
+.compare-form input:focus-visible { outline: 2.5px solid var(--focus); outline-offset: 2px; background: var(--canvas); }
+.compare-form input[aria-invalid="true"] { box-shadow: inset 0 0 0 2px var(--red); }
+.market-pick { position: relative; display: flex; align-items: center; block-size: 2.75rem; padding: 0 1.5rem 0 .6875rem; border-radius: var(--radius-m); background: var(--canvas) var(--chevron) right .625rem center / .75rem no-repeat; box-shadow: inset 0 0 0 2px var(--edge); font-weight: 800; transition: background-color var(--quick); }
+.market-pick:hover { background-color: var(--surface); }
+.market-pick:has(select:focus-visible) { outline: 2.5px solid var(--focus); outline-offset: 2px; }
+.market-pick:has(select:disabled) { opacity: .55; }
+.market-pick select { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; border: 0; opacity: 0; appearance: none; cursor: pointer; }
+.market-pick select:disabled { cursor: progress; }
+.compare-form .primary { inline-size: 100%; min-block-size: 2.75rem; padding: 0; font-size: .84375rem; font-weight: 800; }
+.compare-form .primary[aria-disabled="true"] { cursor: progress; opacity: 1; }
+.compare-message { block-size: 1.375rem; padding-inline-start: .125rem; overflow: hidden; color: var(--muted); font-size: .75rem; line-height: 1.375rem; text-overflow: ellipsis; white-space: nowrap; }
+.compare-message[data-tone="error"], .more-status[data-tone="error"], .welcome-status[data-tone="error"] { color: var(--red); font-weight: 700; }
+.verdict { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr) auto; align-items: center; column-gap: .75rem; min-block-size: 4.5rem; margin-block-start: .375rem; padding: .625rem .75rem; border-radius: var(--radius-m); background: var(--surface); }
+.verdict-scout { --scout-size: 3.5rem; }
+.verdict-copy { display: grid; gap: .125rem; min-inline-size: 0; }
+.verdict h2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: .875rem; font-weight: 800; line-height: 1.25; letter-spacing: -.005em; overflow-wrap: anywhere; }
+.verdict p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--muted); font-size: .75rem; line-height: 1.35; }
+.verdict .quiet { white-space: nowrap; }
+/* Prices in two currencies: the verdict turns sticker-warm, and its one button is the fix, a small yellow pill. */
+.verdict[data-tone="switch"] { background: var(--sun-faint); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sun-deep) 40%, transparent); }
+.verdict[data-tone="switch"] #verdict-action { min-block-size: 2rem; padding: 0 .75rem; border-radius: var(--radius-pill); background: var(--sun); color: var(--on-sun); text-decoration: none; box-shadow: 0 .125rem 0 var(--sun-deep); transition: background-color var(--quick), translate var(--quick) var(--ease-out), box-shadow var(--quick) var(--ease-out); }
+.verdict[data-tone="switch"] #verdict-action:hover { background: var(--sun-bright); }
+.verdict[data-tone="switch"] #verdict-action:active { translate: 0 .125rem; box-shadow: 0 0 0 var(--sun-deep); }
+/* With results on screen each product carries the shopper's own price, so the page line and an empty status step aside. */
+#alternatives[data-phase="results"] .page-product,
+#alternatives[data-phase="results"] .compare-message:empty { display: none; }
+/* The one column may shrink: a long real product name must take its ellipsis, not push the prices off the edge. */
+.offer-groups { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.125rem; }
+.offer-group { min-inline-size: 0; }
+.offer-groups:not(:empty) { margin-block-start: .75rem; }
+/* Each product opens on one warm strip: what it is on the left, the shopper's own price on the right. Strip and rows
+   share their right padding, so "Your price" sits in the same column as every retailer price below it. */
+.offer-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: .75rem; min-block-size: 2.875rem; padding: .375rem .75rem .375rem .875rem; border-radius: var(--radius-s); background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); }
+.offer-titles { display: grid; min-inline-size: 0; }
+.offer-group h3 { font-size: .875rem; font-weight: 800; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.offer-group .variant { color: var(--muted); font-size: .71875rem; line-height: 1.125rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.your-price { display: grid; justify-items: end; white-space: nowrap; }
+.your-label { color: var(--faint); font-size: .6875rem; font-weight: 800; line-height: .875rem; }
+.offer-group .here-price { color: var(--ink); font-size: 1rem; font-weight: 900; line-height: 1.25rem; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.offer-group[data-state="currency"] .offer-head { background: var(--sun-faint); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sun-deep) 40%, transparent); }
+/* One short line between the strip and the rows when something needs saying: nothing found, another currency. */
+.offer-group .group-note { display: flex; align-items: center; gap: .4375rem; margin-block-start: .375rem; padding-inline: .875rem .75rem; color: var(--muted); font-size: .75rem; font-weight: 700; line-height: 1.125rem; }
+.offer-group .group-note::before { content: ""; flex: none; inline-size: .375rem; block-size: .375rem; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--faint); }
+.offer-group .group-note[data-tone="currency"] { color: var(--ink); }
+.offer-group .group-note[data-tone="currency"]::before { border-radius: 1px; rotate: 45deg; background: var(--sun-deep); box-shadow: none; }
+.offer-group .group-note[data-tone="error"] { color: var(--red); }
+.offer-group .group-note[data-tone="error"]::before { background: var(--red); box-shadow: none; }
+/* Retailer rows: two lines on a small card whose colour says whether the offer is worth a look.
+   Green: the same product for less. Plain: the same product at the same price. Receded: dearer, another size or
+   flavour, or a match nobody confirmed. Every row is the same height, so the list never jumps. */
+.offer-group ul { display: grid; gap: .375rem; margin-block-start: .5rem; }
+.offer-group ul:empty { display: none; }
+.retailer-offer {
+  --row-paper: var(--canvas);
+  --row-edge: var(--line-strong);
+  --row-accent: transparent;
+  position: relative;
+  display: grid;
+  grid-template: "head price" 1.375rem "meta diff" 1.125rem / minmax(0, 1fr) auto;
+  column-gap: .75rem;
+  row-gap: .125rem;
+  align-items: center;
+  padding: .5rem .75rem .5rem .875rem;
+  border-radius: var(--radius-s);
+  background: var(--row-paper);
+  box-shadow: inset 3px 0 0 var(--row-accent), inset 0 0 0 1px var(--row-edge);
+  transition: background-color var(--quick), box-shadow var(--quick), translate var(--quick) var(--ease-out);
+}
+.retailer-offer[data-worth="deal"] {
+  --row-paper: var(--green-soft);
+  --row-edge: color-mix(in srgb, var(--green-solid) 34%, transparent);
+  --row-accent: var(--green-solid);
+}
+.retailer-offer:is([data-worth="pricier"], [data-worth="variant"], [data-worth="unsure"], [data-currency="other"]) { --row-paper: var(--surface); --row-edge: transparent; --row-accent: transparent; }
+.retailer-offer:is([data-worth="pricier"], [data-worth="variant"], [data-worth="unsure"], [data-currency="other"]) :is(.retailer-name, .retailer-price) { color: var(--muted); transition: color var(--quick); }
+.retailer-offer:is([data-worth="pricier"], [data-worth="variant"], [data-worth="unsure"], [data-currency="other"]) .retailer-price { font-weight: 700; }
+/* Hover lifts the card a pixel and brings a receded row back to full ink, so anything can still be read in full. */
+.retailer-offer:has(a.retailer-link:hover) { --row-edge: var(--edge); translate: 0 -1px; }
+.retailer-offer[data-worth="deal"]:has(a.retailer-link:hover) { --row-edge: color-mix(in srgb, var(--green-solid) 60%, transparent); }
+.retailer-offer:has(a.retailer-link:hover) :is(.retailer-name, .retailer-price) { color: var(--ink); }
+.retailer-offer:has(.retailer-link:focus-visible) { outline: 2.5px solid var(--focus); outline-offset: 2px; }
+.retailer-link { display: contents; color: inherit; text-decoration: none; }
 .retailer-link:focus-visible { outline: none; }
-/* The link stretches over the row, so the whole offer opens the retailer. */
-.retailer-link::after { content: ""; position: absolute; inset: 0; }
-.retailer-name { min-width: 0; font-size: .8125rem; font-weight: 650; overflow-wrap: anywhere; }
-.retailer-name::after { content: "↗" / ""; margin-inline-start: .25rem; color: var(--faint); font-weight: 500; }
-.retailer-price { flex: none; font-size: 1.0625rem; font-weight: 700; line-height: 1.2; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
-.retailer-currency { margin-inline-start: .1875rem; color: var(--faint); font-size: .625rem; font-weight: 600; letter-spacing: .03em; }
-.retailer-title { margin-top: .0625rem; color: var(--muted); font-size: .75rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.retailer-variant { margin-top: .0625rem; color: var(--muted); font-size: .71875rem; }
-.offer-details { display: flex; flex-wrap: wrap; gap: .125rem .75rem; margin-top: .375rem; color: var(--muted); font-size: .6875rem; font-weight: 550; }
-.offer-label { display: inline-flex; align-items: center; gap: .3125rem; }
-.offer-label::before { content: ""; width: .375rem; height: .375rem; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--faint); }
-.offer-label.positive { color: var(--green); }
+/* The retailer's name is the link; it stretches over the row, so the whole card opens the retailer. */
+a.retailer-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.retailer-head { grid-area: head; display: flex; align-items: center; gap: .375rem; min-inline-size: 0; }
+.retailer-name { min-inline-size: 0; font-size: .84375rem; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.retailer-link:hover .retailer-name { text-decoration: underline; text-decoration-color: var(--sun-deep); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.retailer-arrow { flex: none; inline-size: .6875rem; block-size: .6875rem; color: var(--faint); }
+.sticker { flex: none; margin-inline-start: .125rem; padding: .0625rem .4375rem; border-radius: var(--radius-pill); background: var(--sun); color: var(--on-sun); font-size: .71875rem; font-weight: 900; line-height: 1.35; rotate: -3deg; white-space: nowrap; }
+.retailer-price { grid-area: price; justify-self: end; font-size: 1rem; font-weight: 800; line-height: 1.2; letter-spacing: -.01em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.retailer-offer[data-worth="deal"] .retailer-price { font-weight: 900; }
+/* The price column's second line is one small pill, right under the price and in line with "Your price" above:
+   green for a real saving, plain for the same price, quiet for dearer or unconfirmed, amber when the listing is
+   another size or in another currency. --green on --canvas reads at AA in both light and dark. */
+.offer-difference { grid-area: diff; justify-self: end; padding: 0 .4375rem; border-radius: var(--radius-pill); color: var(--muted); font-size: .6875rem; font-weight: 800; line-height: 1.125rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.offer-difference:empty { display: none; }
+.offer-difference.less { background: var(--green); color: var(--canvas); font-weight: 900; }
+.offer-difference.same { background: var(--fill-strong); color: var(--ink); }
+.offer-difference:is(.more, .unsure) { background: var(--fill); }
+.offer-difference:is(.variant, .other) { background: var(--sun-faint); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sun-deep) 40%, transparent); color: var(--ink); }
+/* The quiet line: one short label (stock, or why the listing does not count), then the listing's title. */
+.offer-details { grid-area: meta; display: flex; align-items: center; gap: .375rem; min-inline-size: 0; color: var(--faint); font-size: .75rem; font-weight: 600; line-height: 1.125rem; white-space: nowrap; }
+.retailer-title { flex: 1 1 0; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; }
+.offer-label { display: inline-flex; flex: 0 1 auto; align-items: center; gap: .25rem; min-inline-size: 0; max-inline-size: 72%; font-weight: 800; }
+.offer-label > span { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; }
+.offer-label::before { content: ""; flex: none; inline-size: .375rem; block-size: .375rem; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--faint); }
+.offer-label + .retailer-title::before { content: "·"; margin-inline-end: .375rem; color: var(--faint); }
+.offer-label.positive { flex: none; color: var(--green); }
 .offer-label.positive::before { background: var(--green-solid); box-shadow: none; }
-.offer-label.caution { color: var(--amber-ink); }
-.offer-label.caution::before { background: var(--amber); box-shadow: none; }
+/* A different size or flavour is the one warm note on a receded row: an amber pill, so it is read before the price. */
+.offer-label.caution { padding: 0 .4375rem 0 .375rem; border-radius: var(--radius-pill); background: var(--sun-faint); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sun-deep) 40%, transparent); color: var(--ink); }
+.offer-label.caution::before { border-radius: 1px; rotate: 45deg; background: var(--sun-deep); box-shadow: none; }
+.offer-group.skeleton { display: grid; }
+.bone-heading { inline-size: 12rem; block-size: .875rem; margin-block: .1875rem; }
+.bone-variant { inline-size: 6rem; block-size: .625rem; margin-block: .25rem; }
+.bone-name { inline-size: 6.5rem; block-size: .8125rem; }
+.bone-price { justify-self: end; inline-size: 3.25rem; block-size: 1rem; }
+.bone-title { inline-size: 11rem; block-size: .625rem; }
+.bone-diff { justify-self: end; inline-size: 2.75rem; block-size: .5625rem; }
+/* Rows are two lines now; the template's third bone has no line to sit on. */
+.bone-labels { display: none; }
+.more-row { display: grid; margin-block-start: 1rem; }
+.more-button { inline-size: 100%; }
+.more-button[aria-disabled="true"] { cursor: progress; opacity: 1; }
+.more-status { block-size: 2.25rem; padding-block-start: .5rem; overflow: hidden; color: var(--muted); font-size: .75rem; line-height: 1.35; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Account: a quiet plan line once signed in, a sign-in card before */
-footer { display: grid; gap: .25rem; padding: .5rem 1rem .5625rem; border-top: 1px solid var(--line); }
-#account-panel { display: flex; align-items: center; gap: .125rem; min-height: 2rem; }
-.account-text { flex: 1; min-width: 0; display: flex; align-items: center; gap: .5rem; color: var(--muted); font-size: .75rem; }
-#account-plan { flex: none; padding: .0625rem .4375rem; border-radius: 99px; background: var(--fill-strong); color: var(--ink); font-size: .6875rem; font-weight: 700; letter-spacing: .02em; }
-#account-plan:empty { display: none; }
-[data-account="pro"] #account-plan { background: var(--primary); color: var(--on-primary); }
-#account-action.primary { min-height: 2rem; margin-inline-start: .25rem; }
-.attribution { color: var(--faint); font-size: .65625rem; }
-[data-account="signedout"] main { display: none; }
-[data-account="signedout"] footer { gap: .75rem; padding-top: 0; border-top: 0; }
-[data-account="signedout"] #account-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: .375rem; }
-[data-account="signedout"] #account-action { grid-column: 1 / -1; min-height: 2.75rem; margin: 0; font-size: .9375rem; }
+#account-refresh:active { rotate: 90deg; }
+body[data-busy] #account-refresh svg { animation: turn .9s linear infinite; }
+@keyframes turn { to { rotate: 1turn; } }
+
+/* Signed out: the whole stage is the welcome. */
+.welcome { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; padding: 1.5rem 1.75rem 1rem; background: var(--canvas); text-align: center; }
+.wordmark { align-self: start; font-size: .9375rem; font-weight: 900; letter-spacing: -.01em; }
+.welcome-scout { --scout-size: 9rem; margin-block-start: auto; }
+.welcome h2 { margin-block-start: .75rem; max-inline-size: 19rem; font-size: 1.5625rem; font-weight: 800; line-height: 1.2; letter-spacing: -.015em; text-wrap: balance; }
+.benefits { display: grid; gap: .5rem; margin-block: 1rem auto; text-align: start; font-size: .875rem; font-weight: 700; }
+.benefits li { display: flex; align-items: center; gap: .625rem; }
+.benefits svg { flex: none; stroke-width: 1.8; }
+.welcome-button { flex: none; inline-size: 100%; }
+.welcome-foot { display: flex; align-items: center; justify-content: space-between; inline-size: 100%; block-size: 2rem; margin-block-start: .5rem; color: var(--muted); font-size: .78125rem; white-space: nowrap; }
+.welcome-foot .quiet { margin-inline-end: -.5rem; }
+.welcome-status { block-size: 2rem; max-inline-size: 100%; color: var(--ink); font-size: .75rem; font-weight: 700; line-height: 1rem; overflow: hidden; text-wrap: balance; }
+
+/* A short screen (see popup-fit.js): the centred states and the welcome give up a little of Scout, not their words. */
+@media (max-height: 34.9rem) {
+  .scene { padding-block-start: .5rem; }
+  .scene-scout { --scout-size: 5rem; }
+  .scene-peek { inset-block-start: 18.625rem; }
+}
+@media (max-height: 30rem) {
+  .welcome { padding-block-start: .75rem; }
+  .welcome-scout { --scout-size: 6.5rem; }
+}
 
 @media (prefers-reduced-motion: no-preference) {
-  button:not(:disabled):active { transform: scale(.97); }
-  .coupon-ticket:not(:disabled):active { transform: scale(.985); }
-  nav::before { transition: transform .3s var(--ease-out); }
-  .coupon-main { transition: grid-template-columns .24s var(--ease-out); }
-  .report-panel { transition: opacity .2s .07s; }
-  .ticket-icon, .ticket-icon svg, .ticket-action { transition: opacity .15s, scale .25s var(--ease-out), translate .25s var(--ease-out); }
-  /* A view arrives from the side its tab sits on. */
-  #views:not([hidden]) ~ main > section { animation: arrive .22s var(--ease-out); }
-  #views:not([hidden]) ~ main > #alternatives { --from: .5rem; }
-  #account-refresh:disabled svg { animation: turn .8s linear infinite; }
-  #coupons:empty::before, #coupons:empty::after, #alternative-results::after { animation: wait .9s ease-in-out infinite alternate; }
-  #coupons:empty::after { animation-delay: .2s; }
+  .skeleton .bone { animation: wait 1s ease-in-out infinite alternate; }
+  .skeleton:nth-child(2) .bone { animation-delay: .15s; }
+  .skeleton:nth-child(3) .bone { animation-delay: .3s; }
 }
-@keyframes arrive { from { opacity: 0; translate: var(--from, -.5rem) 0; } }
-@keyframes turn { to { rotate: 1turn; } }
-@keyframes wait { to { opacity: .45; } }
+@keyframes wait { from { opacity: 1; } to { opacity: .45; } }
 
-@media (prefers-contrast: more) {
-  :root { --line: var(--line-strong); --muted: var(--ink); --faint: var(--ink); }
-  .coupon-ticket { outline: 1px solid var(--ink); outline-offset: -1px; }
-}
-@media (forced-colors: active) {
-  .coupon-ticket, nav button[aria-pressed="true"] { outline: 1px solid ButtonText; outline-offset: -1px; }
-  .coupon-ticket::before, nav::before { display: none; }
-  .ticket-stub { border-inline-start: 1px dashed ButtonText; }
+@media (prefers-reduced-motion: reduce) {
+  :root { --quick: 0s; --base: 0s; --slow: 0s; --dock-wait: 0s; }
+  .ticket:has(.ticket-copy:hover), .ticket:has(.ticket-copy:active) { translate: none; }
+  .ticket[data-stub="copied"] .tick { transition: none; }
+  .notice { translate: none; }
+  body[data-busy] #account-refresh svg { animation: none; }
 }

@@ -1,0 +1,143 @@
+/* CartScout brand: type, colour, shape and motion tokens, plus the few parts every surface shares.
+   Loaded by the popup, the in-page panel (inside its shadow root, hence :host) and the account portal. */
+
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 200 1000;
+  font-display: block;
+  src: url("fonts/nunito-latin-wght-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: block;
+  src: url("fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+}
+
+:root, :host {
+  color-scheme: light dark;
+
+  --font-ui: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Sticker yellow carries the brand; ink does the reading. */
+  --canvas: #fff;
+  --surface: #f6f4ef;
+  --paper: #fffbe8;
+  --ink: #1f1b16;
+  --muted: #5d574d;
+  --faint: #726a5e;
+  --line: rgb(31 27 22 / 10%);
+  --line-strong: rgb(31 27 22 / 22%);
+  --fill: rgb(31 27 22 / 5%);
+  --fill-strong: rgb(31 27 22 / 10%);
+  --sun: #ffd23f;
+  --sun-bright: #ffdc66;
+  --sun-deep: #e2ae00;
+  --sun-soft: #fff0b3;
+  --sun-faint: #fffae0;
+  --on-sun: #1f1b16;
+  --swipe: #ffd23f;
+  --edge: rgb(31 27 22 / 20%);
+  /* The outline of a text field has to be findable on its own: 3:1 against the canvas. */
+  --field-edge: rgb(31 27 22 / 50%);
+  --green: #0a7a50;
+  --green-soft: #daf5e6;
+  --green-solid: #11a26a;
+  --red: #b3261e;
+  --red-soft: #fde7e4;
+  /* Party colours: confetti, Scout's pennant and the tickets in the basket. Never for text or controls. */
+  --pink: #ff6fa5;
+  --sky: #4db8ff;
+  --mint: #2fcf8f;
+  --focus: #1f1b16;
+  --shadow-pop: 0 12px 32px rgb(31 27 22 / 14%), 0 2px 6px rgb(31 27 22 / 8%);
+
+  --radius-s: .5rem;
+  --radius-m: .875rem;
+  --radius-l: 1.25rem;
+  --radius-pill: 99px;
+
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  /* A sticker pressed on: a small overshoot, then still. */
+  --ease-pop: cubic-bezier(.34, 1.4, .64, 1);
+  --quick: .14s;
+  --base: .24s;
+  --slow: .42s;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root, :host {
+    --canvas: #171510;
+    --surface: #211e17;
+    --paper: #26221a;
+    --ink: #fbf8ef;
+    --muted: #b9b2a4;
+    --faint: #b1ab9e;
+    --line: rgb(255 248 230 / 11%);
+    --line-strong: rgb(255 248 230 / 24%);
+    --fill: rgb(255 248 230 / 7%);
+    --fill-strong: rgb(255 248 230 / 13%);
+    --sun-deep: #b48a00;
+    --sun-soft: #4a3f17;
+    --sun-faint: #2c2715;
+    /* On the dark canvas a see-through stripe behind light text turns muddy: draw a solid yellow line under the words instead. */
+    --swipe: #ffd23f;
+    --swipe-at: 100%;
+    --swipe-thick: .14em;
+    --edge: rgb(255 248 230 / 22%);
+    --field-edge: rgb(255 248 230 / 38%);
+    --green: #7fdcae;
+    --green-soft: #173527;
+    --green-solid: #1f9a67;
+    --red: #ff9d94;
+    --red-soft: #45211e;
+    --focus: #ffd23f;
+    --shadow-pop: 0 12px 32px rgb(0 0 0 / 50%), 0 2px 6px rgb(0 0 0 / 30%);
+  }
+}
+
+/* Buttons you can press: the face sits on a 3px lower edge and sinks onto it. */
+:where(button, a):where(.primary, .secondary) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  min-block-size: 2.75rem;
+  padding: 0 1.25rem;
+  border: 0;
+  border-radius: var(--radius-m);
+  font: 800 .9375rem/1.1 var(--font-ui);
+  letter-spacing: .005em;
+  text-decoration: none;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: translate var(--quick) var(--ease-out), box-shadow var(--quick) var(--ease-out), background-color var(--quick);
+}
+:where(button, a).primary { background: var(--sun); color: var(--on-sun); box-shadow: 0 .1875rem 0 var(--sun-deep); }
+:where(button, a).secondary { background: var(--canvas); color: var(--ink); box-shadow: inset 0 0 0 2px var(--edge), 0 .1875rem 0 var(--edge); }
+:where(button, a).primary:not(:disabled, [aria-disabled="true"]):hover { background: var(--sun-bright); }
+:where(button, a).secondary:not(:disabled, [aria-disabled="true"]):hover { background: var(--surface); }
+:where(button, a):where(.primary, .secondary):not(:disabled, [aria-disabled="true"]):active { translate: 0 .125rem; }
+:where(button, a).primary:not(:disabled, [aria-disabled="true"]):active { box-shadow: 0 .0625rem 0 var(--sun-deep); }
+:where(button, a).secondary:not(:disabled, [aria-disabled="true"]):active { box-shadow: inset 0 0 0 2px var(--edge), 0 .0625rem 0 var(--edge); }
+:where(button, a):where(.primary, .secondary):is(:disabled, [aria-disabled="true"]) { cursor: not-allowed; opacity: .55; }
+:where(button, a, select, summary, [tabindex]):focus-visible { outline: 2.5px solid var(--focus); outline-offset: 2px; }
+
+/* The highlighter: a swipe of yellow under the words that matter (a stripe behind them in light, a line beneath in dark). */
+.swipe {
+  margin-inline: -.1em;
+  padding-inline: .1em;
+  border-radius: .16em;
+  background: linear-gradient(var(--swipe), var(--swipe)) no-repeat 0 var(--swipe-at, 84%) / var(--swipe-size, 100%) var(--swipe-thick, .46em);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(button, a):where(.primary, .secondary) { transition: none; }
+}

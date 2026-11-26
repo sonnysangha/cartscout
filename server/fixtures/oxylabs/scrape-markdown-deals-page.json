@@ -1,0 +1,31 @@
+{
+  "state": "done",
+  "results": [
+    {
+      "html": null,
+      "markdown": "# Today's best deals from every shop\n\n- Another Store: 10% off with code ANOTHER10\n- Scout Fixture Shop: free delivery with code SHIPFREE\n- Third Shop: use code THIRD3 for £3 off\n\n## Scout Fixture Shop\n\nExtra 5% off sale lines - use code: SALE5\n\n## Fourth Shop\n\nUse code: FOURTH4\n",
+      "screenshot": null,
+      "json": null,
+      "metadata": {
+        "page": 1,
+        "run_js": false,
+        "url": "https://deals.example.net/today",
+        "statuses": {
+          "http_request": { "code": 200, "tag": "HTTP_OK" }
+        }
+      }
+    }
+  ],
+  "params": {
+    "url": "https://deals.example.net/today",
+    "output": ["markdown"],
+    "json": { "schema": null, "prompt": null },
+    "location": "GB",
+    "device": "desktop",
+    "run_js": null
+  },
+  "metadata": {
+    "timestamp": 1795694403,
+    "request_id": "7517850129655711003"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "state": "done",
+  "results": [
+    {
+      "html": "<!doctype html>\n<html lang=\"en-GB\">\n<head>\n<meta charset=\"utf-8\">\n<title>Scout Fixture Whey Protein Powder Vanilla 1kg | Retailer One</title>\n<meta property=\"og:type\" content=\"product\">\n<meta property=\"og:title\" content=\"Scout Fixture Whey Protein Powder Vanilla 1kg\">\n<script type=\"application/ld+json\">{\"@context\":\"https://schema.org\",\"@type\":\"BreadcrumbList\",\"itemListElement\":[{\"@type\":\"ListItem\",\"position\":1,\"name\":\"Protein\"}]}</script>\n<script type=\"application/ld+json\">\n{\"@context\":\"https://schema.org\",\"@type\":\"Product\",\"name\":\"Whey Protein Powder Vanilla 1kg\",\"brand\":{\"@type\":\"Brand\",\"name\":\"Scout Fixture\"},\"sku\":\"SF-WHEY-VAN-1000\",\"offers\":{\"@type\":\"Offer\",\"price\":\"24.99\",\"priceCurrency\":\"GBP\",\"availability\":\"https://schema.org/InStock\",\"itemCondition\":\"https://schema.org/NewCondition\",\"url\":\"https://retailer-one.example.com/p/scout-fixture-whey-vanilla-1kg\"}}\n</script>\n</head>\n<body>\n<nav><a href=\"/\">Home</a> <a href=\"/protein\">Protein</a></nav>\n<main>\n<h1>Scout Fixture Whey Protein Powder &ndash; Vanilla 1kg</h1>\n<p class=\"price\">&pound;24.99</p>\n<button type=\"button\">Add to basket</button>\n</main>\n</body>\n</html>\n",
+      "markdown": null,
+      "screenshot": null,
+      "json": null,
+      "metadata": {
+        "page": 1,
+        "run_js": false,
+        "url": "https://retailer-one.example.com/p/scout-fixture-whey-vanilla-1kg",
+        "statuses": {
+          "http_request": { "code": 200, "tag": "HTTP_OK" }
+        }
+      }
+    }
+  ],
+  "params": {
+    "url": "https://retailer-one.example.com/p/scout-fixture-whey-vanilla-1kg",
+    "output": ["html"],
+    "json": { "schema": null, "prompt": null },
+    "location": "GB",
+    "device": "desktop",
+    "run_js": null
+  },
+  "metadata": {
+    "timestamp": 1795694404,
+    "request_id": "7517850129655711004"
+  }
+}

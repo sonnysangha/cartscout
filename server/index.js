@@ -1,9 +1,13 @@
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
-import { createDiscovery, normalizeCode, normalizeMerchant } from './oxylabs.js';
-import { createAlternativeDiscovery, parseBasket } from './alternatives.js';
-import { openStore, reporterKey } from './store.js';
+import { createDiscovery, normalizeCode, normalizeMerchant, registrableDomain, SCAN_CEILING } from './oxylabs.js';
+import { createAlternativeDiscovery, LOOKUP_CEILING, parseBasket, retryCost } from './alternatives.js';
+import { LOOKUP_LIFETIME, openStore, reporterKey, SCAN_LIFETIME } from './store.js';
 import { createClerkAuthenticator } from './auth.js';
+import { budgetMessage, createBudget } from './budget.js';
+import { readConfig } from './config.js';
+import { createRecorder } from './recorder.js';
+import { openReplayFolder } from './replay.js';
 
 class HttpError extends Error {
   constructor(status, message, details = {}) {
@@ -33,15 +37,75 @@ async function readJson(request) {
   }
 }
 
+// The service has one shared budget for live work. These keep any one member from spending all of it.
+const MEMBER_SCANS_PER_MINUTE = 6;
+const MEMBER_SCANS_AT_ONCE = 2;
+const MEMBER_LOOKUPS_PER_MINUTE = 12;
+const MEMBER_LOOKUPS_AT_ONCE = 4;
+
+const iso = (time) => new Date(time).toISOString();
+
+/**
+ * `mode` says how the server may use Oxylabs. 'live' reads shops and retailers inside `budget`. 'replay' never sends
+ * a request: scans and price lookups are answered from the database, however old, and from the `replay` folder.
+ * 'off' never sends a request either: saved results still open and anything that needs live work is refused.
+ */
 export function createCouponServer({
   store, discover, findAlternatives, authenticate, allowAnonymous = false, now = Date.now, log = console.error,
+  mode = 'live', budget = createBudget({ ledger: store.ledger }), replay,
 }) {
   if (!authenticate && !allowAnonymous) throw new Error('Configure Clerk authentication.');
+  // A member's scan in flight, by the key their list is saved under.
   const pending = new Map();
+  // A live read of a shop in flight. Everyone who scans that shop meanwhile waits for the same read.
+  const reading = new Map();
   const pendingAlternativeItems = new Map();
-  const alternativeCache = new Map();
   let budgetWindow = 0;
   let discoveryCount = 0;
+  const memberUse = new Map();
+  const memberBusy = new Map();
+
+  function openWindow(time) {
+    const window = Math.floor(time / 60_000);
+    if (budgetWindow === window) return;
+    budgetWindow = window;
+    discoveryCount = 0;
+    memberUse.clear();
+  }
+
+  // Counts one piece of live work against a member for this minute. False means they have had their share.
+  function spend(reporter, kind, limit) {
+    const used = memberUse.get(reporter) ?? { scans: 0, lookups: 0 };
+    if (used[kind] >= limit || (!memberUse.has(reporter) && memberUse.size >= 10_000)) return false;
+    used[kind] += 1;
+    memberUse.set(reporter, used);
+    return true;
+  }
+
+  const working = (key) => memberBusy.get(key) ?? 0;
+  const startWork = (key) => memberBusy.set(key, working(key) + 1);
+  function endWork(key) {
+    if (working(key) > 1) memberBusy.set(key, working(key) - 1);
+    else memberBusy.delete(key);
+  }
+  const slowDown = (message) => new HttpError(429, message, { code: 'slow_down' });
+  const liveOff = () => new HttpError(503, 'Live searching is switched off on this CartScout server.', { code: 'live_off' });
+
+  // The budget cannot cover the operation. "message" repeats "error" so a client can read either name, and resetAt
+  // is when the budget that ran out starts again.
+  function budgetReached(operation, refused) {
+    const message = budgetMessage(operation, refused);
+    return new HttpError(429, message, { code: 'budget_reached', message, resetAt: iso(refused.resetAt) });
+  }
+
+  // A scan of this shop failed outright a few minutes ago. It is answered from that note, not by asking Oxylabs again.
+  function failedRecently(mark, time) {
+    const minutes = Math.max(1, Math.ceil((mark.retry_at - time) / 60_000));
+    const wait = minutes === 1 ? 'a minute' : `${minutes} minutes`;
+    return new HttpError(502, `Scout couldn’t read this shop’s coupon pages a moment ago. Try again in about ${wait}.`, {
+      code: 'scan_failed', retryAt: iso(mark.retry_at),
+    });
+  }
 
   function accountDetails(identity, reporter) {
     return {
@@ -55,48 +119,158 @@ export function createCouponServer({
     const search = store.get(cacheKey);
     return {
       merchant, source, refreshedAt: search?.refreshed_at ?? null, partial: !!search?.partial,
+      // fetchedAt is when the pages behind this list were read, and freshUntil when the list stops counting as fresh.
+      // A list answered from pages read for an earlier scan says so, so the popup can show its real age.
+      ...(search && { fetchedAt: iso(search.refreshed_at), freshUntil: iso(search.retry_at) }),
+      ...(search?.reused && { reused: true }),
+      ...(search?.seeded && { seeded: true }),
       coupons: store.listing(cacheKey, reporter, now()),
       ...(identity && { account: accountDetails(identity, reporter) }),
     };
   }
 
-  async function lookup(merchant, cacheKey, reporter, identity, cacheOnly) {
+  // What the server already holds about a shop (or a sibling subdomain on the same brand domain, e.g.
+  // `uk.ridge.com` <-> `ridge.com`) that answers a scan without sending another request.
+  function shopRecord(merchant) {
+    const exact = store.shopScan(merchant);
+    if (exact?.result.complete) return exact;
+    const domain = registrableDomain(merchant);
+    const sibling = domain ? store.shopScanByDomain(domain) : null;
+    if (sibling && (!exact || sibling.fetchedAt > exact.fetchedAt)) return sibling;
+    return exact;
+  }
+
+  function alreadyRead(merchant, time) {
+    const record = shopRecord(merchant);
+    if (mode === 'replay') {
+      // Replay answers from whatever is saved, however old, and treats it as a scan made now.
+      const saved = record ?? replay?.scan(merchant);
+      return saved ? { ...saved, freshFrom: time } : null;
+    }
+    // Anyone's complete scan from the last 24 hours covers this shop (and its regional subdomains) for everyone.
+    return record?.result.complete && time - record.fetchedAt < SCAN_LIFETIME.complete ? record : null;
+  }
+
+  // Starts a live read of a shop and holds its worst case against the budget first, or says why it may not start.
+  function startReading(merchant, time) {
+    // In replay a shop nobody saved takes the same path as a shop that could not be read.
+    if (mode === 'replay') return { read: Promise.reject(new Error(`Nothing is saved to replay for ${merchant}`)) };
+    const mark = store.scanFailure(merchant);
+    if (mark?.retry_at > time) return { refused: failedRecently(mark, time) };
+    if (mode === 'off') return { refused: liveOff() };
+    if (!discover) return { refused: new HttpError(503, 'Coupon search is unavailable.') };
+    if (reading.size >= 5 || discoveryCount >= 15) {
+      return { refused: new HttpError(429, 'Coupon search is busy. Try again shortly.') };
+    }
+    const { ticket, refused } = budget.reserve('scan', SCAN_CEILING, time);
+    if (refused) return { refused: budgetReached('scan', refused) };
+
+    discoveryCount += 1;
+    const read = (async () => {
+      try {
+        const result = await discover(merchant, { ticket });
+        const fetchedAt = now();
+        store.clearScanFailure(merchant);
+        store.saveShopScan(merchant, result, fetchedAt);
+        return { result, fetchedAt, seeded: false };
+      } catch (error) {
+        store.markScanFailure(merchant, now());
+        throw error;
+      } finally {
+        ticket.release();
+        reading.delete(merchant);
+      }
+    })();
+    reading.set(merchant, read);
+    return { read };
+  }
+
+  // When live work cannot run, the member still gets what is saved: their own list, or the shop's last read when
+  // that is newer. Nothing is sent and no weekly scan is used.
+  function savedAnswer(merchant, cacheKey, reporter, identity, time) {
+    const own = store.get(cacheKey);
+    const record = shopRecord(merchant);
+    if (record && (!own || record.fetchedAt > own.refreshed_at)) {
+      store.save(cacheKey, record.result, time, null, { fetchedAt: record.fetchedAt, reused: true, seeded: record.seeded });
+    } else if (!own) {
+      return null;
+    }
+    return payload(merchant, cacheKey, reporter, store.get(cacheKey).retry_at > time ? 'cache' : 'stale', identity);
+  }
+
+  async function lookup(merchant, cacheKey, reporter, identity, cacheOnly, force = false) {
     const time = now();
     const cached = store.get(cacheKey);
-    if (cached?.retry_at > time) return payload(merchant, cacheKey, reporter, 'cache', identity);
-    if (cacheOnly && identity) {
-      throw new HttpError(409, 'Scan this site to find coupon codes.', {
-        code: 'scan_required', account: accountDetails(identity, reporter),
-      });
+    if (cacheOnly && pending.has(cacheKey)) {
+      const account = identity && { account: accountDetails(identity, reporter) };
+      throw new HttpError(409, 'Scout is still scanning this shop.', { code: 'scan_in_progress', ...account });
+    }
+    if (!force && cached?.retry_at > time) return payload(merchant, cacheKey, reporter, 'cache', identity);
+    // "Saved results only" is a promise that nothing will be spent, signed in or not.
+    if (cacheOnly) {
+      const account = identity && { account: accountDetails(identity, reporter) };
+      // A scan carries on after the popup that asked for it has closed. Reopening says so, and can join it for free.
+      if (pending.has(cacheKey)) {
+        throw new HttpError(409, 'Scout is still scanning this shop.', { code: 'scan_in_progress', ...account });
+      }
+      // For Pro members, any fresh shop scan in the shared pool (e.g. from another member or a seed) feeds straight
+      // into the extension cache without asking for a fresh scan.
+      if (identity?.plan !== 'free') {
+        const ready = alreadyRead(merchant, time);
+        if (ready && (!cached || ready.fetchedAt > cached.refreshed_at)) {
+          store.save(cacheKey, ready.result, time, null, {
+            fetchedAt: ready.fetchedAt, freshFrom: ready.freshFrom, reused: true, seeded: ready.seeded,
+          });
+          return payload(merchant, cacheKey, reporter, 'cache', identity);
+        }
+      }
+      // A saved scan that has aged out is still theirs to see; spending a fresh scan stays their choice.
+      if (cached) return payload(merchant, cacheKey, reporter, 'stale', identity);
+      throw new HttpError(409, 'Scan this shop to find coupon codes.', { code: 'scan_required', ...account });
     }
 
     let refresh = pending.get(cacheKey);
     if (!refresh) {
-      const window = Math.floor(time / 60_000);
-      if (budgetWindow !== window) {
-        budgetWindow = window;
-        discoveryCount = 0;
+      openWindow(time);
+      const scanning = `scan:${reporter}`;
+      if (working(scanning) >= MEMBER_SCANS_AT_ONCE || !spend(reporter, 'scans', MEMBER_SCANS_PER_MINUTE)) {
+        if (cached) return payload(merchant, cacheKey, reporter, 'stale', identity);
+        throw slowDown('That’s a lot of scans at once. Give Scout a minute, then try again.');
       }
       const limited = identity?.plan === 'free';
       const reservation = limited ? store.reserveScan(reporter, time) : null;
       if (limited && !reservation) {
-        throw new HttpError(429, 'You’ve used all 5 free site scans for this week.', {
+        throw new HttpError(429, 'You’ve used all 5 free scans for this week.', {
           code: 'scan_limit', account: accountDetails(identity, reporter),
         });
       }
-      if (pending.size >= 5 || discoveryCount >= 15) {
+      // The answer comes from pages the server already read, from a read of the same shop that is running for
+      // someone else, or from a live read. A Free member's scan counts against their week in all three cases, and
+      // their list and thumbs stay their own: only the public pages are shared.
+      const ready = force ? null : alreadyRead(merchant, time);
+      const started = ready ? null : reading.has(merchant) ? { read: reading.get(merchant) } : startReading(merchant, time);
+      if (started?.refused) {
+        // Nothing was read, so nothing is charged: a refused scan leaves the member's weekly scans alone.
         if (reservation) store.releaseScan(reservation);
-        if (cached) return payload(merchant, cacheKey, reporter, 'stale', identity);
-        throw new HttpError(429, 'Coupon search is busy. Try again shortly.');
+        const saved = savedAnswer(merchant, cacheKey, reporter, identity, time);
+        if (saved) return saved;
+        if (identity) started.refused.details.account = accountDetails(identity, reporter);
+        throw started.refused;
       }
-      discoveryCount += 1;
+      const read = ready ? Promise.resolve({ ...ready, reused: true }) : started.read;
+      startWork(scanning);
       refresh = (async () => {
         try {
-          const result = await discover(merchant);
-          store.save(cacheKey, result, now(), reservation);
+          const { result, fetchedAt, freshFrom, reused = false, seeded } = await read;
+          // A scan that comes back empty because coupon sites could not be read gave the member nothing, so it is free.
+          const charged = result.complete || result.coupons.length > 0;
+          store.save(cacheKey, result, now(), charged ? reservation : null, { fetchedAt, freshFrom, reused, seeded });
+          if (reservation && !charged) store.releaseScan(reservation);
         } catch (error) {
           if (reservation) store.releaseScan(reservation);
           throw error;
+        } finally {
+          endWork(scanning);
         }
       })();
       pending.set(cacheKey, refresh);
@@ -106,29 +280,72 @@ export function createCouponServer({
       return payload(merchant, cacheKey, reporter, 'live', identity);
     } catch (error) {
       log('Coupon discovery failed:', error.message);
-      if (cached) return payload(merchant, cacheKey, reporter, 'stale', identity);
+      const saved = savedAnswer(merchant, cacheKey, reporter, identity, now());
+      if (saved) return saved;
       throw new HttpError(502, 'Coupon search is temporarily unavailable. Try again shortly.');
     } finally {
       if (pending.get(cacheKey) === refresh) pending.delete(cacheKey);
     }
   }
 
-  async function alternatives(merchant, cacheKey, country, items) {
-    if (!findAlternatives) throw new HttpError(503, 'Retailer search is unavailable.');
+  async function alternatives(merchant, reporter, country, items) {
+    const looking = `lookup:${reporter}`;
     const lookups = items.map(async (item) => {
-      const key = JSON.stringify([cacheKey, country, item.name.toLowerCase(), item.variant.toLowerCase()]);
-      const cached = alternativeCache.get(key);
-      if (cached?.expiresAt > now()) return cached.value;
+      const time = now();
+      // Prices are public, so a lookup is shared by everyone who asks about the same product at the same shop.
+      const key = JSON.stringify([merchant, country, item.name.toLowerCase(), item.variant.toLowerCase()]);
+      const saved = store.lookup(merchant, country, item);
+      if (mode === 'replay') {
+        const answer = saved ?? replay?.lookup(merchant, country, item);
+        if (!answer) throw new Error(`Nothing is saved to replay for ${item.name}`);
+        return { offers: answer.offers, partial: answer.partial, fetchedAt: iso(answer.fetchedAt) };
+      }
+      // Every saved answer says when its prices were read. One that is past its lifetime is only given when Scout
+      // cannot look again, and is marked stale.
+      const fromSaved = (stale) => ({
+        offers: saved.offers, partial: saved.partial, fetchedAt: iso(saved.fetchedAt), ...(stale && { stale: true }),
+      });
+      // A partial answer keeps its retailers for six hours. After its half hour, only the pages that failed are
+      // asked for again, and a page that has failed twice is left alone.
+      const young = saved && time - saved.fetchedAt < LOOKUP_LIFETIME.complete;
+      const retry = young && saved.partial ? retryCost(saved.pages) : 0;
+      if (saved && (time < saved.freshUntil || (young && saved.partial && !retry))) return fromSaved(false);
       if (pendingAlternativeItems.has(key)) return pendingAlternativeItems.get(key);
-      if (pendingAlternativeItems.size >= 8) throw new HttpError(429, 'Retailer search is busy. Try again shortly.');
 
+      const refuse = (error) => {
+        if (saved) return fromSaved(true);
+        throw error;
+      };
+      if (mode === 'off') return refuse(liveOff());
+      if (!findAlternatives) return refuse(new HttpError(503, 'Retailer search is unavailable.'));
+      if (pendingAlternativeItems.size >= 8) return refuse(new HttpError(429, 'Retailer search is busy. Try again shortly.'));
+      openWindow(time);
+      if (working(looking) >= MEMBER_LOOKUPS_AT_ONCE || !spend(reporter, 'lookups', MEMBER_LOOKUPS_PER_MINUTE)) {
+        return refuse(slowDown('That’s a lot of price checks at once. Give Scout a minute, then try again.'));
+      }
+      // The worst case is held before anything is sent: a search and four pages, or just the pages a retry asks for.
+      const { ticket, refused } = budget.reserve('lookup', retry || LOOKUP_CEILING, time);
+      if (refused) return refuse(budgetReached('lookup', refused));
+
+      startWork(looking);
       const lookup = (async () => {
-        const value = await findAlternatives(merchant, country, item);
-        if (!value.partial) {
-          if (alternativeCache.size >= 256) alternativeCache.delete(alternativeCache.keys().next().value);
-          alternativeCache.set(key, { value, expiresAt: now() + 15 * 60_000 });
+        try {
+          const value = await findAlternatives(merchant, country, item, { ticket, ...(retry && { previous: saved }) });
+          const partial = !!value.partial;
+          // After a retry the oldest price in the answer is still from the first look.
+          const fetchedAt = retry ? saved.fetchedAt : now();
+          const freshUntil = partial
+            ? Math.min(now() + LOOKUP_LIFETIME.partial, fetchedAt + LOOKUP_LIFETIME.complete)
+            : fetchedAt + LOOKUP_LIFETIME.complete;
+          store.saveLookup(merchant, country, item, { offers: value.offers, partial, pages: value.pages ?? [] }, { fetchedAt, freshUntil });
+          return { offers: value.offers, partial, fetchedAt: iso(fetchedAt) };
+        } catch (error) {
+          if (saved) return fromSaved(true);
+          throw error;
+        } finally {
+          ticket.release();
+          endWork(looking);
         }
-        return value;
       })();
       pendingAlternativeItems.set(key, lookup);
       try {
@@ -139,61 +356,109 @@ export function createCouponServer({
     });
     const settled = await Promise.allSettled(lookups);
     if (settled.every((result) => result.status === 'rejected')) {
-      const reason = settled[0].reason;
-      if (reason instanceof HttpError) throw reason;
-      log('Retailer lookup failed:', reason?.message);
+      const refusal = settled.find((result) => result.reason instanceof HttpError)?.reason;
+      if (refusal) throw refusal;
+      log('Retailer lookup failed:', settled[0].reason?.message);
       throw new HttpError(502, 'Retailer lookup is temporarily unavailable.');
     }
     return { country, results: items.map((item, index) => {
       const result = settled[index];
-      return result.status === 'fulfilled'
-        ? { ...item, ...result.value }
-        : { ...item, offers: [], error: 'This item could not be checked.' };
+      if (result.status === 'fulfilled') return { ...item, ...result.value };
+      // A product that was refused says why; any other failure keeps the plain sentence.
+      const { code } = result.reason instanceof HttpError ? result.reason.details : {};
+      return { ...item, offers: [], error: code ? result.reason.message : 'This item could not be checked.', ...(code && { code }) };
     }) };
   }
 
+  const allowedCorsOrigins = new Set([
+    'http://localhost:8788',
+    'http://127.0.0.1:8788',
+    ...(process.env.PORTAL_ORIGIN ? [process.env.PORTAL_ORIGIN.replace(/\/$/, '')] : []),
+    ...String(process.env.CLERK_ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean),
+  ]);
+
   return createServer(async (request, response) => {
+    const reqOrigin = typeof request.headers.origin === 'string' ? request.headers.origin.replace(/\/$/, '') : '';
+    const corsHeaders = reqOrigin && (allowedCorsOrigins.has(reqOrigin) || /^chrome-extension:\/\//.test(reqOrigin))
+      ? {
+          'Access-Control-Allow-Origin': reqOrigin,
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+          Vary: 'Origin',
+        }
+      : {};
+
     function send(status, body) {
-      response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...corsHeaders });
       response.end(JSON.stringify(body));
     }
 
     try {
+      if (request.method === 'OPTIONS') {
+        response.writeHead(204, corsHeaders);
+        response.end();
+        return;
+      }
       if (request.url === '/health' && request.method === 'GET') return send(200, { ok: true });
       const wantsAccount = request.method === 'GET' && request.url === '/v1/account';
-      if (!wantsAccount && (request.method !== 'POST' || !['/v1/coupons', '/v1/reports', '/v1/alternatives'].includes(request.url))) {
+      const wantsWins = request.method === 'GET' && request.url === '/v1/wins';
+      if (!wantsAccount && !wantsWins && (request.method !== 'POST' || !['/v1/coupons', '/v1/reports', '/v1/alternatives'].includes(request.url))) {
         throw new HttpError(404, 'Route not found.');
       }
 
       const token = request.headers.authorization?.match(/^Bearer (\S+)$/i)?.[1];
       const identity = authenticate && token ? await authenticate(token) : null;
-      if (!identity && (wantsAccount || authenticate || !token || !/^[a-f0-9]{64}$/.test(token))) {
+      if (!identity && (wantsAccount || wantsWins || authenticate || !token || !/^[a-f0-9]{64}$/.test(token))) {
         throw new HttpError(401, 'Sign in to CartScout to continue.', { code: 'sign_in_required' });
       }
       const reporter = reporterKey(identity ? `clerk:${identity.userId}` : token);
       if (wantsAccount) return send(200, accountDetails(identity, reporter));
+      if (wantsWins) {
+        const isPro = !identity || identity.plan === 'pro';
+        if (!isPro) {
+          return send(200, { locked: true, count: store.winsCount(now()), wins: [] });
+        }
+        return send(200, { locked: false, wins: store.recentWins(now(), 12) });
+      }
 
       const body = await readJson(request);
       const merchant = normalizeMerchant(body.merchant);
-      if (!merchant) throw new HttpError(400, 'Enter a public merchant hostname.');
+      if (!merchant) throw new HttpError(400, 'Scout can only look up public shop websites.');
       const cacheKey = identity?.plan === 'free' ? `private:${reporter}:${merchant}` : merchant;
       if (request.url === '/v1/alternatives') {
         const basket = parseBasket(body);
         if (!basket) throw new HttpError(400, 'Choose a supported country and provide basket products.');
-        return send(200, await alternatives(merchant, cacheKey, basket.country, basket.items));
+        return send(200, await alternatives(merchant, reporter, basket.country, basket.items));
       }
       if (request.url === '/v1/coupons') {
         if (Object.hasOwn(body, 'cacheOnly') && typeof body.cacheOnly !== 'boolean') {
           throw new HttpError(400, 'The cacheOnly option must be true or false.');
         }
-        return send(200, await lookup(merchant, cacheKey, reporter, identity, body.cacheOnly));
+        if (Object.hasOwn(body, 'force') && typeof body.force !== 'boolean') {
+          throw new HttpError(400, 'The force option must be true or false.');
+        }
+        return send(200, await lookup(merchant, cacheKey, reporter, identity, body.cacheOnly, !body.cacheOnly && body.force === true));
       }
       const code = normalizeCode(body.code);
       if (!code || typeof body.worked !== 'boolean') {
         throw new HttpError(400, 'Enter a coupon and whether it worked.');
       }
-      if (!store.report(cacheKey, code, reporter, body.worked, now())) {
-        throw new HttpError(404, 'This code is no longer in the merchant results.');
+      const savedAmount = typeof body.savedAmount === 'number' && Number.isFinite(body.savedAmount) && body.savedAmount > 0 && body.savedAmount <= 100_000
+        ? body.savedAmount : null;
+      const savedCurrency = typeof body.savedCurrency === 'string' && /^[A-Za-z]{3}$/.test(body.savedCurrency.trim())
+        ? body.savedCurrency.trim().toUpperCase() : null;
+      const FALLBACK_HANDLES = [
+        'sam_k', 'alex_m', 'charlie_r', 'morgan_t', 'jamie_b', 'riley_w',
+        'casey_p', 'drew_h', 'taylor_s', 'jordan_d', 'avery_n', 'quinn_l',
+        'ella_v', 'finn_g', 'ruby_c', 'owen_f', 'isla_j', 'theo_b',
+      ];
+      const fallbackHandle = FALLBACK_HANDLES[parseInt(reporter.slice(0, 6), 16) % FALLBACK_HANDLES.length];
+      const memberName = identity?.username || fallbackHandle;
+      const saving = body.worked
+        ? { ...(savedAmount !== null && { amount: savedAmount, currency: savedCurrency }), memberName }
+        : undefined;
+      if (!store.report(cacheKey, code, reporter, body.worked, now(), saving)) {
+        throw new HttpError(404, 'This code is no longer listed for this shop.');
       }
       return send(200, payload(merchant, cacheKey, reporter, 'cache', identity));
     } catch (error) {
@@ -204,26 +469,55 @@ export function createCouponServer({
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const key = process.env.OXYLABS_WEB_API_KEY?.trim();
-  if (!key) throw new Error('Set OXYLABS_WEB_API_KEY on the coupon server.');
-  const location = process.env.OXYLABS_LOCATION?.trim().toUpperCase();
-  if (location && !/^[A-Z]{2}$/.test(location)) throw new Error('Use a two-letter OXYLABS_LOCATION.');
-  const host = process.env.HOST || '127.0.0.1';
-  const port = Number(process.env.PORT || 8787);
-  const configured = process.env.CLERK_SECRET_KEY || process.env.CLERK_PUBLISHABLE_KEY || process.env.CLERK_ALLOWED_ORIGINS;
-  const allowAnonymous = !configured && process.env.CARTSCOUT_ALLOW_ANONYMOUS === '1'
-    && process.env.NODE_ENV !== 'production' && ['127.0.0.1', '::1', 'localhost'].includes(host);
+/**
+ * Builds the API from the environment: Clerk, the database, and Oxylabs in the mode the environment asks for.
+ * In replay and off modes no Oxylabs client is made at all, so the server starts without OXYLABS_WEB_API_KEY.
+ */
+export function createFromEnv(env = process.env, { log = console.error } = {}) {
+  const config = readConfig(env);
+  const host = env.HOST || '127.0.0.1';
+  const port = Number(env.PORT || 8787);
+  const configured = env.CLERK_SECRET_KEY || env.CLERK_PUBLISHABLE_KEY || env.CLERK_ALLOWED_ORIGINS;
+  const allowAnonymous = !configured && env.CARTSCOUT_ALLOW_ANONYMOUS === '1'
+    && env.NODE_ENV !== 'production' && ['127.0.0.1', '::1', 'localhost'].includes(host);
   const authenticate = allowAnonymous ? undefined : createClerkAuthenticator({
-    secretKey: process.env.CLERK_SECRET_KEY,
-    publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
-    allowedOrigins: process.env.CLERK_ALLOWED_ORIGINS,
-    proPlan: process.env.CLERK_PRO_PLAN || 'pro',
+    secretKey: env.CLERK_SECRET_KEY,
+    jwtKey: env.CLERK_JWT_KEY?.trim() || undefined,
+    publishableKey: env.CLERK_PUBLISHABLE_KEY,
+    allowedOrigins: env.CLERK_ALLOWED_ORIGINS,
+    proPlan: env.CLERK_PRO_PLAN || 'pro',
   });
-  const store = openStore(process.env.DATABASE_PATH || 'data/cartscout.sqlite');
+  const store = openStore(config.databasePath);
+  const budget = createBudget({ ledger: store.ledger, daily: config.daily, monthly: config.monthly });
+  const live = config.mode === 'live';
+  const oxylabs = {
+    key: config.key, parser: config.parser,
+    record: config.record ? createRecorder(config.recordFolder, { log }) : undefined,
+  };
   const server = createCouponServer({
-    store, authenticate, allowAnonymous,
-    discover: createDiscovery({ key, location }), findAlternatives: createAlternativeDiscovery({ key }),
+    store, authenticate, allowAnonymous, log, budget, mode: config.mode,
+    replay: config.mode === 'replay' ? openReplayFolder(config.replayFolder, { log }) : undefined,
+    discover: live ? createDiscovery({ ...oxylabs, location: config.location }) : undefined,
+    findAlternatives: live ? createAlternativeDiscovery(oxylabs) : undefined,
   });
-  server.listen(port, host, () => console.log(`CartScout API listening on ${host}:${server.address().port}`));
+  return { server, store, budget, config, host, port };
+}
+
+/** One line for the start-up log: what this server may do with Oxylabs, and how much of the budget is gone. */
+export function describeOxylabs(config, budget, now = Date.now()) {
+  if (config.mode === 'replay') {
+    return `Oxylabs: replay. No request is sent. Scans and price lookups are answered from the database and ${config.replayFolder}.`;
+  }
+  if (config.mode === 'off') return 'Oxylabs: off. No request is sent. Saved results still open.';
+  const { day, month } = budget.status(now);
+  return `Oxylabs: live, ${config.parser} page parsing. Budget in UTC: ${day.used} of ${day.limit} requests used today, `
+    + `${month.used} of ${month.limit} this month.${config.record ? ` Recording answers to ${config.recordFolder}.` : ''}`;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const { server, budget, config, host, port } = createFromEnv();
+  server.listen(port, host, () => {
+    console.log(`CartScout API listening on ${host}:${server.address().port}`);
+    console.log(describeOxylabs(config, budget));
+  });
 }

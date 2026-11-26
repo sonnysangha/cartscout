@@ -1,0 +1,187 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import test from 'node:test';
+import { fakeOxylabs, HOUR, MINUTE, page, startApi } from './fixtures/kit.js';
+import { createDiscovery } from './oxylabs.js';
+import { openStore, reporterKey } from './store.js';
+
+// Every shop has a voucher page of its own that shows one code, so a live scan is three requests: the search, the
+// home page and the voucher page. `broken` names shops whose voucher page cannot be read.
+async function api(t, { store, broken = new Set() } = {}) {
+  const clock = { now: Date.parse('2026-11-23T12:00:00Z') };
+  const gate = { wait: null };
+  const oxylabs = fakeOxylabs(async ({ endpoint, query, url }) => {
+    if (gate.wait) await gate.wait;
+    if (endpoint === 'search') return [{ title: 'Voucher codes', url: `https://${query.split(' ')[0]}/voucher-codes` }];
+    const { hostname, pathname } = new URL(url);
+    if (pathname !== '/voucher-codes') return page({ markdown: 'Welcome to the shop. New in this week.', json: { coupons: [] } });
+    if (broken.has(hostname)) return new Response('', { status: 500 });
+    return page({ markdown: '10% off everything - use code: SAVE10', json: { coupons: [] } });
+  });
+  const service = await startApi(t, {
+    store, clock, discover: createDiscovery({ key: 'fixture', location: 'GB', request: oxylabs.request, now: () => clock.now }),
+  });
+  return { ...service, oxylabs, gate };
+}
+const shop = { merchant: 'shop.example.com' };
+const when = (time) => new Date(time).toISOString();
+
+test('a shop anyone scanned in the last 24 hours is answered from what the server already read', async (t) => {
+  const { call, clock, oxylabs } = await api(t);
+  const read = clock.now;
+  const first = (await call('coupons', 'free-a', shop)).body;
+  assert.deepEqual([first.source, first.reused, first.fetchedAt, first.account.scans.remaining], ['live', undefined, when(read), 4]);
+  assert.equal(oxylabs.sent.length, 3);
+
+  // Twenty-three hours later another Free member scans the same shop. Nothing is sent to Oxylabs. It still counts as
+  // one of their scans, and the answer says when the pages were really read.
+  clock.now = read + 23 * HOUR;
+  const second = (await call('coupons', 'free-b', shop)).body;
+  assert.deepEqual([second.source, second.reused, second.fetchedAt, second.refreshedAt], ['live', true, when(read), read]);
+  assert.deepEqual(second.coupons.map(({ code, sources }) => [code, sources]), [['SAVE10', ['https://shop.example.com/voucher-codes']]]);
+  assert.equal(second.account.scans.remaining, 4);
+  // A Pro member opening the extension (`cacheOnly: true`) gets those shared findings immediately from cache.
+  const proCached = (await call('coupons', 'pro-c', { ...shop, cacheOnly: true })).body;
+  assert.deepEqual([proCached.source, proCached.reused, proCached.fetchedAt], ['cache', true, when(read)]);
+  assert.deepEqual(proCached.coupons.map(({ code }) => code), ['SAVE10']);
+  assert.equal(oxylabs.sent.length, 3);
+
+  // What stays private is unchanged. A Free member's thumb is theirs alone; Pro members share theirs with each other.
+  assert.equal((await call('reports', 'free-a', { ...shop, code: 'SAVE10', worked: true })).body.coupons[0].worked, 1);
+  assert.equal((await call('reports', 'pro-c', { ...shop, code: 'SAVE10', worked: false })).body.coupons[0].failed, 1);
+  const seenBy = async (member) => {
+    const [coupon] = (await call('coupons', member, { ...shop, cacheOnly: true })).body.coupons;
+    return [coupon.worked, coupon.failed];
+  };
+  assert.deepEqual(await seenBy('free-a'), [1, 0]);
+  assert.deepEqual(await seenBy('free-b'), [0, 0]);
+  assert.deepEqual(await seenBy('pro-d'), [0, 1]);
+  assert.equal(oxylabs.sent.length, 3);
+});
+
+test('regional and storefront subdomains share fresh scans on the same brand domain, while multi-tenant platforms stay isolated', async (t) => {
+  const { call, oxylabs } = await api(t);
+  const first = (await call('coupons', 'pro-c', { merchant: 'ridge.com' })).body;
+  assert.deepEqual(first.coupons.map(({ code }) => code), ['SAVE10']);
+  assert.equal(oxylabs.sent.length, 3);
+
+  // Visiting uk.ridge.com immediately hydrates from ridge.com's cached scan without asking Oxylabs again.
+  const uk = (await call('coupons', 'pro-d', { merchant: 'uk.ridge.com', cacheOnly: true })).body;
+  assert.deepEqual([uk.source, uk.reused, uk.coupons.map(({ code }) => code)], ['cache', true, ['SAVE10']]);
+  assert.equal(oxylabs.sent.length, 3);
+
+  // Sibling store subdomains (uk.store.anker.com -> uk.anker.com) also share the cached brand scan.
+  await call('coupons', 'pro-c', { merchant: 'uk.store.anker.com' });
+  assert.equal(oxylabs.sent.length, 6);
+  const anker = (await call('coupons', 'pro-d', { merchant: 'uk.anker.com', cacheOnly: true })).body;
+  assert.deepEqual([anker.source, anker.reused, anker.coupons.map(({ code }) => code)], ['cache', true, ['SAVE10']]);
+  assert.equal(oxylabs.sent.length, 6);
+
+  // Multi-tenant storefront hosts like *.myshopify.com must never leak codes across unrelated shops.
+  await call('coupons', 'pro-c', { merchant: 'alpha.myshopify.com' });
+  assert.equal(oxylabs.sent.length, 9);
+  const otherTenant = await call('coupons', 'pro-d', { merchant: 'beta.myshopify.com', cacheOnly: true });
+  assert.equal(otherTenant.status, 409);
+  assert.equal(otherTenant.body.code, 'scan_required');
+});
+
+test('a reused answer is fresh until the pages are 24 hours old, and then the shop is read again', async (t) => {
+  const { call, clock, oxylabs } = await api(t);
+  const read = clock.now;
+  await call('coupons', 'pro-c', shop);
+  clock.now = read + 23 * HOUR;
+  const reused = (await call('coupons', 'free-a', shop)).body;
+  assert.equal(reused.freshUntil, when(read + 24 * HOUR));
+
+  clock.now = read + 24 * HOUR - MINUTE;
+  assert.equal((await call('coupons', 'free-a', { ...shop, cacheOnly: true })).body.source, 'cache');
+  // The lifetime is counted from the reading of the pages, not from the member's scan.
+  clock.now = read + 24 * HOUR + MINUTE;
+  const aged = (await call('coupons', 'free-a', { ...shop, cacheOnly: true })).body;
+  assert.deepEqual([aged.source, aged.fetchedAt, aged.reused], ['stale', when(read), true]);
+  assert.equal(oxylabs.sent.length, 3);
+
+  const again = (await call('coupons', 'free-a', shop)).body;
+  assert.deepEqual([again.source, again.reused, again.fetchedAt, again.account.scans.remaining], ['live', undefined, when(clock.now), 3]);
+  assert.equal(oxylabs.sent.length, 6);
+});
+
+test('a scan that could not read every source is not passed on to other members', async (t) => {
+  const { call, clock, oxylabs } = await api(t, { broken: new Set(['shop.example.com']) });
+  const partial = (await call('coupons', 'pro-c', shop)).body;
+  assert.deepEqual([partial.source, partial.partial, partial.coupons.length], ['live', true, 0]);
+  assert.equal(oxylabs.sent.length, 3);
+
+  clock.now += 5 * MINUTE;
+  const other = (await call('coupons', 'free-a', shop)).body;
+  assert.deepEqual([other.source, other.partial, other.reused], ['live', true, undefined]);
+  assert.equal(oxylabs.sent.length, 6);
+  // It found nothing because a source could not be read, so it is not charged either.
+  assert.equal(other.account.scans.remaining, 5);
+});
+
+test('two members scanning the same shop at the same moment share one read', async (t) => {
+  const { call, gate, oxylabs } = await api(t);
+  let open;
+  gate.wait = new Promise((resolve) => { open = resolve; });
+  const first = call('coupons', 'free-a', shop);
+  while (oxylabs.sent.length < 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  const second = call('coupons', 'free-b', shop);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  gate.wait = null;
+  open();
+
+  for (const answer of await Promise.all([first, second])) {
+    assert.equal(answer.status, 200);
+    assert.deepEqual([answer.body.source, answer.body.reused, answer.body.account.scans.remaining], ['live', undefined, 4]);
+    assert.deepEqual(answer.body.coupons.map(({ code }) => code), ['SAVE10']);
+  }
+  assert.equal(oxylabs.sent.length, 3);
+});
+
+test('a database from before this change is brought forward, so shops scanned earlier are not paid for again', async (t) => {
+  const folder = mkdtempSync(join(tmpdir(), 'cartscout-reuse-'));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  const path = join(folder, 'earlier.sqlite');
+  const scanned = Date.parse('2026-11-23T02:00:00Z');
+  const older = Date.parse('2026-11-22T20:00:00Z');
+  const privately = (member, host) => `private:${reporterKey(`clerk:${member}`)}:${host}`;
+
+  // The tables as they were: no record per shop, and each Free member's scan under their own key.
+  const before = new DatabaseSync(path);
+  before.exec(`
+    CREATE TABLE searches (merchant TEXT PRIMARY KEY, refreshed_at INTEGER NOT NULL, retry_at INTEGER NOT NULL,
+      partial INTEGER NOT NULL, discovery_version INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE coupons (merchant TEXT NOT NULL, code TEXT NOT NULL, offer TEXT NOT NULL, sources TEXT NOT NULL,
+      expires_on TEXT, seen_at INTEGER NOT NULL, discovery_version INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (merchant, code));
+  `);
+  const addScan = before.prepare('INSERT INTO searches VALUES (?, ?, ?, ?, 2)');
+  const addCode = before.prepare('INSERT INTO coupons VALUES (?, ?, ?, ?, NULL, ?, 2)');
+  addScan.run(privately('user_bailey', 'shop.example.com'), older, older + 24 * HOUR, 0);
+  addCode.run(privately('user_bailey', 'shop.example.com'), 'OLDER5', '5% off', '[]', older);
+  addScan.run(privately('user_alex', 'shop.example.com'), scanned, scanned + 24 * HOUR, 0);
+  addCode.run(privately('user_alex', 'shop.example.com'), 'EARLIER10', '10% off', '["https://shop.example.com/offers"]', scanned);
+  // A code this member's list has kept from a scan before that one. It was not part of the latest read.
+  addCode.run(privately('user_alex', 'shop.example.com'), 'KEPT', 'From last week', '[]', scanned - 48 * HOUR);
+  addScan.run('other.example.com', older, older + 10 * MINUTE, 1);
+  before.close();
+
+  const store = openStore(path);
+  assert.deepEqual(store.shopScan('shop.example.com'), {
+    result: { complete: true, coupons: [{ code: 'EARLIER10', offer: '10% off', sources: ['https://shop.example.com/offers'], expiresOn: null }] },
+    fetchedAt: scanned, seeded: false,
+  });
+  assert.deepEqual(store.shopScan('other.example.com'), { result: { complete: false, coupons: [] }, fetchedAt: older, seeded: false });
+
+  const { call, oxylabs } = await api(t, { store });
+  const answer = (await call('coupons', 'pro-c', shop)).body;
+  assert.deepEqual([answer.source, answer.reused, answer.fetchedAt], ['live', true, when(scanned)]);
+  assert.deepEqual(answer.coupons.map(({ code }) => code), ['EARLIER10']);
+  assert.equal(oxylabs.sent.length, 0);
+  // The member whose scan it was still has their own list, untouched.
+  const own = (await call('coupons', 'free-a', { ...shop, cacheOnly: true })).body;
+  assert.deepEqual([own.source, own.reused, own.coupons.map(({ code }) => code).sort()], ['cache', undefined, ['EARLIER10', 'KEPT']]);
+});

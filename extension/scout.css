@@ -1,0 +1,159 @@
+/* Scout, the CartScout mascot. Markup comes from scout.js; data-mood picks the pose and the motion. */
+.scout {
+  --scout-body: #ffd23f;
+  --scout-line: #1f1b16;
+  --scout-hub: #fff;
+  --scout-ink: #1f1b16;
+  --scout-white: #fff;
+  --scout-flag: #ff6fa5;
+  --scout-loot-a: #ff6fa5;
+  --scout-loot-b: #4db8ff;
+  --scout-shadow: rgb(31 27 22 / 12%);
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  inline-size: var(--scout-size, 4.5rem);
+  aspect-ratio: 104 / 80;
+}
+@media (prefers-color-scheme: dark) {
+  .scout:not(.scout-tile, .scout-sticker) {
+    --scout-line: #fbf8ef;
+    --scout-hub: #17150f;
+    --scout-shadow: rgb(0 0 0 / 35%);
+  }
+}
+
+/* The brand mark: Scout on the ink tile, the same in both colour schemes.
+   The art is sized from the tile itself (not with padding), so the tile holds its shape in any parent. */
+.scout-tile {
+  --scout-line: #fff;
+  --scout-hub: #1f1b16;
+  --scout-shadow: transparent;
+  aspect-ratio: 1;
+  border-radius: 26%;
+  background: #1f1b16;
+  /* A faint ring so the ink tile keeps its edge on the dark canvas. */
+  box-shadow: inset 0 0 0 1px rgb(255 248 230 / 34%);
+}
+.scout-tile .scout-art { inline-size: 100%; block-size: auto; aspect-ratio: 104 / 80; translate: -3% 2%; }
+.scout-tile :is(.scout-speed, .scout-shadow) { display: none; }
+
+/* Scout as a die-cut sticker, for yellow surfaces where a yellow cart would disappear. */
+.scout-sticker {
+  --scout-line: #1f1b16;
+  --scout-hub: #fff;
+  --scout-shadow: transparent;
+}
+.scout-sticker .scout-art {
+  filter: drop-shadow(2.5px 0 0 #fff) drop-shadow(-2.5px 0 0 #fff) drop-shadow(0 2.5px 0 #fff) drop-shadow(0 -2.5px 0 #fff)
+    drop-shadow(0 3px 5px rgb(31 27 22 / 22%));
+}
+
+.scout-art { display: block; inline-size: 100%; block-size: 100%; overflow: visible; fill: none; stroke: none; }
+.scout-art :is(g, path, ellipse, circle, rect) { transform-box: fill-box; transform-origin: center; }
+.scout-art .scout-cart { transform-origin: 50% 100%; }
+.scout-art .scout-flag { transform-origin: 0% 100%; }
+.scout-art .scout-pennant { transform-origin: 0% 50%; }
+.scout-art :is(.scout-loot-a, .scout-loot-b) { transform-origin: 50% 100%; }
+
+.scout-shadow { fill: var(--scout-shadow); stroke: none; }
+.scout-basket { fill: var(--scout-body); stroke: none; }
+.scout-rim { fill: none; stroke: var(--scout-line); stroke-width: 5.5; stroke-linecap: round; stroke-linejoin: round; }
+.scout-pole { fill: none; stroke: var(--scout-line); stroke-width: 2.2; stroke-linecap: round; }
+.scout-pennant { fill: var(--scout-flag); stroke: var(--scout-flag); stroke-width: 1.6; stroke-linejoin: round; }
+.scout-tyre { fill: var(--scout-line); stroke: none; }
+.scout-hub { fill: var(--scout-hub); stroke: none; }
+.scout-white { fill: var(--scout-white); stroke: none; }
+.scout-pupil, .scout-grin, .scout-oh { fill: var(--scout-ink); stroke: none; }
+.scout-glint { fill: var(--scout-white); stroke: none; }
+.scout-eyes-joy path, .scout-smile, .scout-flat { fill: none; stroke: var(--scout-ink); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.scout-speed path { fill: none; stroke: var(--scout-line); stroke-width: 2.4; stroke-linecap: round; }
+.scout-loot rect { stroke: none; }
+.scout-loot path { fill: none; stroke: rgb(31 27 22 / 45%); stroke-width: 1.5; stroke-linecap: round; stroke-dasharray: .1 2.9; }
+.scout-loot-a rect { fill: var(--scout-loot-a); }
+.scout-loot-b rect { fill: var(--scout-loot-b); }
+.scout-loot-a { rotate: -9deg; }
+.scout-loot-b { rotate: 8deg; }
+
+/* Poses: which eyes and mouth show, and what is in the basket. These hold with motion reduced. */
+.scout-eyes-joy, .scout-grin, .scout-flat, .scout-oh, .scout-speed, .scout-loot { opacity: 0; }
+.scout:is([data-mood="happy"], [data-mood="party"]) :is(.scout-eyes, .scout-smile) { opacity: 0; }
+.scout:is([data-mood="happy"], [data-mood="party"]) :is(.scout-eyes-joy, .scout-grin, .scout-loot) { opacity: 1; }
+.scout[data-mood="search"] .scout-speed { opacity: .5; }
+.scout[data-mood="search"] .scout-cart { rotate: 3deg; }
+.scout[data-mood="search"] .scout-pennant { scale: .86 1; }
+.scout[data-mood="work"] .scout-eyes { scale: 1 .8; }
+.scout[data-mood="shrug"] .scout-smile { opacity: 0; }
+.scout[data-mood="shrug"] .scout-flat { opacity: 1; }
+.scout[data-mood="shrug"] .scout-pupils { translate: -1.2px 2px; }
+.scout[data-mood="shrug"] .scout-flag { rotate: 9deg; }
+.scout[data-mood="oops"] .scout-smile { opacity: 0; }
+.scout[data-mood="oops"] .scout-oh { opacity: 1; }
+.scout[data-mood="oops"] .scout-pupils { scale: .8; }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* At rest Scout settles and only blinks. The float, the pennant and the glance play briefly each time the mood changes;
+     only real activity (search, work) keeps moving. */
+  /* Scout blinks for the first half minute and then rests, except while a scan or a run is going on. */
+  .scout-eyes { animation: scout-blink 4.8s 6; }
+  .scout:is([data-mood="search"], [data-mood="work"]) .scout-eyes { animation-iteration-count: infinite; }
+  .scout-pennant { animation: scout-flutter 1.6s ease-in-out 3; }
+  .scout:is([data-mood="idle"], [data-mood="shrug"]) .scout-cart { animation: scout-float 3.6s ease-in-out 1; }
+  .scout[data-mood="idle"] .scout-pupils { animation: scout-glance 7s ease-in-out 1; }
+
+  .scout[data-mood="wave"] .scout-cart { animation: scout-rock 1.1s ease-in-out 2; }
+  .scout[data-mood="wave"] .scout-flag { animation: scout-flag-wave .55s ease-in-out 4; }
+
+  .scout[data-mood="search"] .scout-cart { animation: scout-rumble .34s ease-in-out infinite; }
+  .scout[data-mood="search"] .scout-wheel { animation: scout-spin .5s linear infinite; }
+  .scout[data-mood="search"] .scout-pupils { animation: scout-look 1.5s ease-in-out infinite; }
+  .scout[data-mood="search"] .scout-speed path { animation: scout-streak .62s linear infinite; }
+  .scout[data-mood="search"] .scout-speed path:nth-child(2) { animation-delay: -.2s; }
+  .scout[data-mood="search"] .scout-speed path:nth-child(3) { animation-delay: -.41s; }
+  .scout[data-mood="search"] .scout-pennant { animation: scout-flutter .4s ease-in-out infinite; }
+  .scout[data-mood="work"] .scout-pennant { animation: scout-flutter 1.1s ease-in-out infinite; }
+  .scout[data-mood="search"] .scout-eyes { animation: none; }
+
+  .scout[data-mood="work"] .scout-cart { animation: scout-bob .56s ease-in-out infinite; }
+  .scout[data-mood="work"] .scout-wheel { animation: scout-spin 1.1s linear infinite; }
+  .scout[data-mood="work"] .scout-eyes { animation: none; }
+
+  .scout[data-mood="happy"] .scout-cart { animation: scout-hop .62s both; }
+  .scout[data-mood="happy"] .scout-shadow { animation: scout-shadow-hop .62s both; }
+  .scout[data-mood="happy"] .scout-loot-a { animation: scout-loot .5s .3s both; }
+  .scout[data-mood="happy"] .scout-loot-b { animation: scout-loot .5s .42s both; }
+
+  .scout[data-mood="party"] .scout-cart { animation: scout-hop .62s both, scout-wheelie 1.5s .7s ease-in-out 2; }
+  .scout[data-mood="party"] .scout-shadow { animation: scout-shadow-hop .62s both; }
+  .scout[data-mood="party"] .scout-wheel { animation: scout-spin .7s .7s linear 4; }
+  .scout[data-mood="party"] .scout-loot-a { animation: scout-loot .5s .3s both; }
+  .scout[data-mood="party"] .scout-loot-b { animation: scout-loot .5s .42s both; }
+  .scout[data-mood="party"] .scout-flag { animation: scout-flag-wave .5s ease-in-out 6; }
+
+  .scout[data-mood="oops"] .scout-cart { animation: scout-shake .42s both; }
+}
+
+@keyframes scout-blink { 0%, 44%, 48%, 100% { scale: 1 1; } 46% { scale: 1 .1; } }
+@keyframes scout-glance { 0%, 62%, 100% { translate: 0 0; } 68%, 82% { translate: -3px -.4px; } 88% { translate: .6px 0; } }
+@keyframes scout-flutter { 50% { scale: .88 1; rotate: 3deg; } }
+@keyframes scout-float { 50% { translate: 0 -1.6px; } }
+@keyframes scout-bob { 50% { translate: 0 -2.4px; } }
+@keyframes scout-rumble { 0%, 100% { translate: 0 0; rotate: 3deg; } 50% { translate: .8px -1.1px; rotate: 4.2deg; } }
+@keyframes scout-spin { to { rotate: 1turn; } }
+@keyframes scout-look { 0%, 100% { translate: -2.6px 0; } 50% { translate: 1px 0; } }
+@keyframes scout-streak { from { translate: 7px 0; opacity: 0; } 30% { opacity: 1; } to { translate: -7px 0; opacity: 0; } }
+@keyframes scout-rock { 30% { rotate: -5deg; } 65% { rotate: 4deg; } }
+@keyframes scout-flag-wave { 0%, 100% { rotate: 0deg; } 50% { rotate: 13deg; } }
+@keyframes scout-shake { 20% { translate: -2.6px 0; } 40% { translate: 2.6px 0; } 60% { translate: -1.6px 0; } 80% { translate: 1.6px 0; } }
+@keyframes scout-loot { from { translate: 0 12px; scale: .7; } 60% { translate: 0 -2.5px; scale: 1.04; } to { translate: 0 0; scale: 1; } }
+/* A hop with weight: squash, stretch at the top, squash on landing. */
+@keyframes scout-hop {
+  0% { translate: 0 0; scale: 1 1; }
+  18% { translate: 0 1.5px; scale: 1.06 .91; }
+  46% { translate: 0 -12px; scale: .96 1.07; }
+  72% { translate: 0 0; scale: 1.05 .94; }
+  100% { translate: 0 0; scale: 1 1; }
+}
+@keyframes scout-shadow-hop { 46% { scale: .68 .8; opacity: .55; } }
+/* Front wheel up, like a kid riding the trolley down the aisle. */
+@keyframes scout-wheelie { 0%, 100% { rotate: 0deg; translate: 0 0; } 30%, 60% { rotate: -11deg; translate: -1px -2px; } }

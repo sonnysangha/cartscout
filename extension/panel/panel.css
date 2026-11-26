@@ -1,0 +1,387 @@
+/* The in-page panel. It sits inside a closed shadow root on a shop's page, so every length is in px:
+   rem would follow the shop's root font size. brand.css and scout.css are adopted before this file. */
+
+:host {
+  all: initial !important;
+  position: fixed !important;
+  inset: 0 0 auto auto !important;
+  z-index: 2147483647 !important;
+  display: block !important;
+  inline-size: 0 !important;
+  block-size: 0 !important;
+  --font-ui: "CartScout Nunito", ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-code: "CartScout Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --ticket-edge: drop-shadow(0 0 .5px rgb(31 27 22 / 50%)) drop-shadow(0 1px 1.5px rgb(31 27 22 / 8%));
+  /* A code still to come: about 3:1 against the panel in each theme, so the pip reads without its label. */
+  --pip-pending: rgb(31 27 22 / 48%);
+  /* The saved sheet is yellow in both themes, so what sits on it cannot follow the theme's ink and paper. */
+  --sheet-ink: #1f1b16;
+  --sheet-ink-edge: #000;
+  --sheet-ink-hover: #38322a;
+  --sheet-paper: #fffbe8;
+}
+@media (prefers-color-scheme: dark) {
+  :host {
+    --ticket-edge: drop-shadow(0 0 .5px rgb(255 248 230 / 34%));
+    --pip-pending: rgb(255 248 230 / 34%);
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+::selection { background: var(--sun); color: var(--sheet-ink); }
+
+/* The panel sits in whichever corner covers none of what the shopper needs (panel.js picks it): top right first. */
+.panel {
+  position: fixed;
+  inset: 16px 16px auto auto;
+  display: flex;
+  flex-direction: column;
+  inline-size: min(360px, 100vw - 32px);
+  max-block-size: calc(100dvh - 32px);
+  overflow: hidden auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  border-radius: 20px;
+  background: var(--canvas);
+  box-shadow: var(--shadow-pop), 0 0 0 1px var(--line);
+  color: var(--ink);
+  font: 600 14px/1.4 var(--font-ui);
+  text-align: start;
+  -webkit-font-smoothing: antialiased;
+  opacity: 0;
+  translate: 32px 0;
+  visibility: hidden;
+  /* Leaving is quicker than arriving. */
+  transition: translate var(--base) var(--ease-out), opacity var(--base) var(--ease-out),
+    color var(--base) var(--ease-out), visibility 0s linear var(--base);
+}
+.panel[data-dock="bottom-right"] { inset: auto 16px 16px auto; }
+.panel[data-dock="bottom-left"] { inset: auto auto 16px 16px; }
+.panel[data-dock="top-left"] { inset: 16px auto auto 16px; }
+/* It slides in from the side it is docked on. */
+.panel[data-dock$="left"] { translate: -32px 0; }
+.panel[data-open] {
+  opacity: 1;
+  translate: 0 0;
+  visibility: visible;
+  transition: translate var(--slow) var(--ease-out), opacity var(--slow) var(--ease-out),
+    color var(--base) var(--ease-out), visibility 0s;
+}
+
+/* A confirmed saving turns the whole panel into a yellow sticker. The sheet grows out from Scout,
+   clipped in a layer of its own so its size never becomes something the panel can scroll. */
+.sheet-clip { position: absolute; inset: 0; overflow: clip; border-radius: inherit; pointer-events: none; }
+.sheet {
+  position: absolute;
+  inset-block-start: 98px;
+  inset-inline-start: 64px;
+  inline-size: 960px;
+  block-size: 960px;
+  margin: -480px 0 0 -480px;
+  border-radius: 50%;
+  background: var(--sun);
+  scale: 0;
+  pointer-events: none;
+  transition: scale .52s var(--ease-out);
+}
+.panel[data-status="saved"] {
+  --ink: var(--sheet-ink);
+  --muted: #4b4433;
+  --line: rgb(31 27 22 / 14%);
+  --line-strong: rgb(31 27 22 / 28%);
+  --pip-pending: var(--line-strong);
+  --fill-strong: rgb(31 27 22 / 12%);
+  --paper: var(--sheet-paper);
+  --sun-soft: #fff0b3;
+  --focus: var(--sheet-ink);
+  --ticket-edge: drop-shadow(0 0 .5px rgb(31 27 22 / 55%)) drop-shadow(0 2px 3px rgb(31 27 22 / 12%));
+  /* Once the sheet has covered the panel the panel itself turns yellow, so a panel short enough to scroll stays yellow all the way down. */
+  background: var(--sun);
+}
+.panel[data-status="saved"][data-open] {
+  transition: translate var(--slow) var(--ease-out), opacity var(--slow) var(--ease-out),
+    color var(--base) var(--ease-out), visibility 0s, background-color 0s linear .52s;
+}
+.panel[data-status="saved"] .sheet { scale: 1; }
+
+.bar {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  block-size: 48px;
+  padding-inline: 20px 8px;
+}
+.brand { font: 800 15px/1 var(--font-ui); letter-spacing: -.005em; }
+.close {
+  display: grid;
+  place-items: center;
+  inline-size: 32px;
+  block-size: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color var(--quick), color var(--quick);
+}
+.close:hover { background: var(--fill-strong); color: var(--ink); }
+.close-icon { inline-size: 18px; block-size: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+
+/* One fixed stage for every state: views cross-fade inside it, so the panel never changes size. */
+.stage { position: relative; flex: none; display: grid; block-size: 300px; margin: 0 20px 20px; }
+.view {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  opacity: 0;
+  translate: 0 8px;
+  visibility: hidden;
+  transition: opacity var(--quick) var(--ease-out), translate 0s linear var(--quick), visibility 0s linear var(--quick);
+}
+.view[data-active] {
+  opacity: 1;
+  translate: 0 0;
+  visibility: visible;
+  transition: opacity var(--base) var(--ease-out) .09s, translate var(--base) var(--ease-out) .09s, visibility 0s;
+}
+/* A Scout nobody can see does not keep moving. */
+.view:not([data-active]) .scout-art * { animation: none !important; }
+
+.title, .win-title, .body, .note { margin: 0; }
+.title { font: 800 20px/1.15 var(--font-ui); letter-spacing: -.01em; font-variant-numeric: tabular-nums; text-wrap: balance; }
+
+/* Buttons, restated in px on top of brand.css. */
+.panel :is(.primary, .secondary) {
+  flex: none;
+  inline-size: 100%;
+  min-block-size: 44px;
+  margin-block: auto 4px;
+  padding: 0 20px;
+  border-radius: 14px;
+  font: 800 15px/1.1 var(--font-ui);
+}
+/* The brand's pressed edge: 3px at rest, sinking 2px. */
+.panel .primary { box-shadow: 0 3px 0 var(--sun-deep); }
+.panel .secondary { box-shadow: inset 0 0 0 2px var(--edge), 0 3px 0 var(--edge); }
+.panel :is(.primary, .secondary):not([aria-disabled="true"]):active { translate: 0 2px; }
+.panel .primary:not([aria-disabled="true"]):active { box-shadow: 0 1px 0 var(--sun-deep); }
+.panel .secondary:not([aria-disabled="true"]):active { box-shadow: inset 0 0 0 2px var(--edge), 0 1px 0 var(--edge); }
+/* "Stopping…" is a status people read, so it keeps its contrast: quieter, flat, and not faded. */
+.panel .secondary[aria-disabled="true"] { opacity: 1; color: var(--muted); box-shadow: inset 0 0 0 2px var(--line); cursor: default; }
+.panel :is(.primary, .secondary, .close):focus-visible { outline: 2.5px solid var(--focus); outline-offset: 2px; }
+/* On yellow the one action is ink. */
+.panel .view-saved .primary { background: var(--sheet-ink); color: var(--sheet-paper); box-shadow: 0 3px 0 var(--sheet-ink-edge); }
+.panel .view-saved .primary:hover { background: var(--sheet-ink-hover); }
+.panel .view-saved .primary:not([aria-disabled="true"]):active { box-shadow: 0 1px 0 var(--sheet-ink-edge); }
+.primary[data-off] { visibility: hidden; }
+/* The note's actions share one row: Done on its own, or "Try the rest" beside it when there are codes left to try. */
+.actions { flex: none; display: flex; gap: 8px; inline-size: 100%; margin-block: auto 4px; }
+.panel .actions :is(.primary, .secondary) { flex: 1 1 0; inline-size: auto; min-inline-size: 0; margin-block: 0; }
+.panel .actions .secondary[data-off] { display: none; }
+
+/* Trying */
+.lead { display: flex; align-items: center; gap: 12px; block-size: 72px; }
+.lead .scout { --scout-size: 80px; }
+.lead-text { display: grid; gap: 3px; min-inline-size: 0; }
+/* Two lines are always reserved, so a longer sentence or a long code never moves the headline. */
+.note {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  block-size: 36px;
+  overflow: hidden;
+  color: var(--muted);
+  font: 600 13px/18px var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+.ticket {
+  position: relative;
+  flex: none;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: center;
+  block-size: 92px;
+  margin-block-start: 20px;
+  filter: var(--ticket-edge);
+}
+/* The paper is its own layer so the notches are real cut-outs. */
+.ticket::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  background: linear-gradient(to right, var(--sun-soft) 76px, var(--paper) 0);
+  mask: radial-gradient(circle at 76px 0, #0000 8px, #000 8.5px), radial-gradient(circle at 76px 100%, #0000 8px, #000 8.5px);
+  mask-composite: intersect;
+}
+.ticket::after {
+  content: "";
+  position: absolute;
+  inset-block: 16px;
+  inset-inline-start: 75px;
+  border-inline-start: 2px dashed var(--line-strong);
+}
+.stub { position: relative; display: grid; place-items: center; }
+.stub-mark { inline-size: 30px; block-size: 30px; fill: none; stroke: var(--ink); stroke-width: 2.6; stroke-linecap: round; rotate: -8deg; }
+.code {
+  position: relative;
+  overflow: hidden;
+  padding-inline: 16px;
+  color: var(--ink);
+  font: 800 24px/32px var(--font-code);
+  letter-spacing: .02em;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  block-size: 32px;
+}
+.code[data-length="m"] { font-size: 19px; }
+.code[data-length="l"] { font-size: 14px; }
+/* The longest codes take two lines in the same box rather than shrink or lose their end. */
+.code[data-length="xl"] { font-size: 13px; line-height: 16px; letter-spacing: 0; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+
+/* The ticket's small print: how many shoppers said the code worked, and how many said it didn't. */
+.thumbs {
+  position: absolute;
+  inset-inline: 76px 0;
+  inset-block-end: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  block-size: 16px;
+  color: var(--muted);
+  font: 700 12px/16px var(--font-ui);
+}
+.thumbs[data-off] { visibility: hidden; }
+.thumb { display: inline-flex; align-items: center; gap: 3px; }
+.thumb-icon { flex: none; inline-size: 13px; block-size: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.count { font-weight: 800; font-variant-numeric: tabular-nums; }
+.thumbs[data-lead="up"] .thumb.up { color: var(--green); }
+
+.pips { flex: none; display: flex; gap: 6px; block-size: 14px; margin: 22px 0 0; padding: 0; list-style: none; }
+.pip {
+  position: relative;
+  flex: 1 1 0;
+  /* Five or more span the row. Fewer stay ticket-sized, so one code never looks like a full progress bar. */
+  max-inline-size: calc((100% - 24px) / 5);
+  border-radius: 4px;
+  /* A code still to come: a colour of its own, so it reads as a pip on white as well as on the dark canvas. */
+  background: var(--pip-pending);
+  mask: radial-gradient(circle at 0 50%, #0000 3px, #000 3.5px), radial-gradient(circle at 100% 50%, #0000 3px, #000 3.5px);
+  mask-composite: intersect;
+}
+.pip[data-state="rejected"], .pip[data-state="error"] { background: var(--red-soft); }
+.pip:is([data-state="rejected"], [data-state="error"])::after {
+  content: "";
+  position: absolute;
+  inset: 6px 32%;
+  border-radius: 1px;
+  background: var(--red);
+  rotate: -24deg;
+}
+/* The code being tried: filled yellow with an ink edge, so it reads on white as well as on the dark canvas. */
+.pip[data-state="current"] { background: var(--sun); box-shadow: inset 0 0 0 2px var(--on-sun); }
+.pip[data-state="applied"] { background: var(--green-solid); }
+
+/* Saved */
+.win { position: relative; display: flex; align-items: center; gap: 16px; block-size: 92px; }
+.win-mark { flex: none; display: block; inline-size: 112px; block-size: 86px; }
+.win .scout { --scout-size: 112px; }
+.win-title { display: grid; gap: 2px; min-inline-size: 0; }
+.win-label { font: 800 17px/1.2 var(--font-ui); }
+.amount { block-size: 46px; font: 900 46px/1 var(--font-ui); letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* A saving in the thousands still fits beside Scout. */
+.amount[data-length="l"] { font-size: 38px; line-height: 46px; }
+.receipt { position: relative; flex: none; margin: 16px 0 0; filter: var(--ticket-edge); }
+.receipt::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  background: linear-gradient(var(--sun-soft) 40px, var(--paper) 0);
+  mask: radial-gradient(circle at 0 40px, #0000 7px, #000 7.5px), radial-gradient(circle at 100% 40px, #0000 7px, #000 7.5px);
+  mask-composite: intersect;
+}
+.receipt-row { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px; block-size: 28px; padding-inline: 18px; }
+.receipt-row.row-code { block-size: 40px; margin-block-end: 6px; }
+.receipt-row.row-code::after {
+  content: "";
+  position: absolute;
+  inset-inline: 14px;
+  inset-block-end: -1px;
+  border-block-start: 2px dashed var(--line-strong);
+}
+.receipt-row:last-child { margin-block-end: 6px; }
+.receipt dt { color: var(--muted); font: 700 13px/1 var(--font-ui); }
+.receipt dd { min-inline-size: 0; margin: 0; overflow: hidden; font: 700 15px/1.2 var(--font-ui); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.receipt-code { font: 800 15px/1.2 var(--font-code); letter-spacing: .02em; }
+/* The longest codes take two lines in the same row rather than lose their end. */
+.receipt[data-long] .row-code dd { text-align: end; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; line-height: 15px; }
+.receipt[data-long] .receipt-code { font-size: 12px; line-height: 15px; letter-spacing: 0; }
+.receipt-was { color: var(--muted); text-decoration-thickness: 1.5px; }
+.receipt-now { font-weight: 900; font-size: 17px; }
+
+/* Starting, applied, none, stopped and error */
+.view-note { align-items: center; text-align: center; }
+.view-note .scout { --scout-size: 124px; margin-block-start: 10px; }
+/* The headline and the sentence keep one box whatever they say, so a change of words moves nothing. */
+.view-note .title { inline-size: 100%; margin-block-start: 14px; overflow-wrap: anywhere; }
+.body { inline-size: 100%; max-inline-size: 34ch; margin-block-start: 6px; color: var(--muted); font: 600 14px/1.45 var(--font-ui); text-wrap: balance; }
+
+/* The scan notice: the same shell, smaller. It says one thing and offers one action. */
+.panel[data-kind="notice"] .view:not(.view-notice) { display: none; }
+.panel[data-kind="notice"] .stage { block-size: 132px; }
+.panel[data-kind="notice"][data-notice="none"] .stage { block-size: 64px; }
+.notice-lead { flex: none; display: flex; align-items: center; gap: 12px; block-size: 64px; }
+.notice-lead .scout { --scout-size: 80px; }
+.notice-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  min-inline-size: 0;
+  margin: 0;
+  overflow: hidden;
+  font: 800 17px/21px var(--font-ui);
+  letter-spacing: -.005em;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+.notice-action { flex: none; display: grid; block-size: 48px; margin-block-start: 20px; }
+.notice-action > * { grid-area: 1 / 1; }
+.notice-action .primary {
+  transition: translate var(--quick) var(--ease-out), box-shadow var(--quick) var(--ease-out), background-color var(--quick),
+    opacity var(--base) var(--ease-out);
+}
+.panel[data-notice="none"] .notice-action { display: none; }
+.notice-hint {
+  align-self: center;
+  margin: 0;
+  color: var(--muted);
+  font: 700 14px/1.4 var(--font-ui);
+  text-align: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--base) var(--ease-out);
+}
+.notice-action[data-asked] .primary { opacity: 0; visibility: hidden; }
+.notice-action[data-asked] .notice-hint { opacity: 1; visibility: visible; }
+
+.confetti { position: fixed; inset: 0; pointer-events: none; }
+.visually-hidden { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* One short settle as a pip becomes the code being tried. Nothing keeps pulsing. */
+@media (prefers-reduced-motion: no-preference) {
+  .pip[data-state="current"] { animation: pip-settle .32s var(--ease-pop) 1; }
+}
+@keyframes pip-settle { from { scale: 1.18 1.5; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .panel, .panel[data-open], .panel[data-status="saved"][data-open], .view, .view[data-active], .sheet, .close, .notice-hint, .notice-action .primary { transition: none; }
+  .panel, .panel[data-dock] { translate: 0 0; }
+}

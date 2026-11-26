@@ -1,184 +1,42 @@
+// Myprotein UK basket reader for "Other retailers" whole-basket price comparison.
+// Checkout auto-try now lives in extension/autotry/ (with THG nutrition as one recipe among many).
 // Chrome serializes this function into the active tab's isolated world.
-export async function runMyproteinCoupons(codes, background = false) {
-  const supported = location.protocol === 'https:'
-    && ['www.myprotein.com', 'myprotein.com'].includes(location.hostname)
-    && /^\/basket\/?$/.test(location.pathname);
-  if (!supported) return { state: 'unsupported' };
-
-  let current = globalThis.cartScoutCouponTrial;
-  if (['saved', 'accepted'].includes(current?.state)
-    && !document.getElementById('promo-code-remove')) {
-    current = undefined;
-    delete globalThis.cartScoutCouponTrial;
-  }
-  if (codes === 'stop' && current?.state === 'running') current.stopRequested = true;
-  if (!Array.isArray(codes) || current?.state === 'running') return current ?? { state: 'idle' };
-
-  const candidates = [...new Set(codes.filter((code) => typeof code === 'string'
-    && /^[a-z0-9_-]{3,40}$/i.test(code)))].slice(0, 10);
-  const find = (id) => document.getElementById(id);
-  const addButton = () => find('promo-code-add');
-  const applied = () => !!find('promo-code-remove');
-  const input = () => find('promo-code-input');
-
-  function subtotal() {
-    const labels = [...document.querySelectorAll('main span, main p')];
-    for (const label of labels) {
-      if (label.childElementCount || label.textContent.trim() !== 'Basket subtotal:') continue;
-      const money = label.nextElementSibling?.textContent.match(/£\s*([\d,]+)\.(\d{2})/);
-      if (money) return Number(money[1].replaceAll(',', '')) * 100 + Number(money[2]);
-    }
-    return null;
-  }
-
-  function setInput(field, value) {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, value);
-    field.dispatchEvent(new Event('input', { bubbles: true }));
-    field.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-
-  const unavailable = (button) => button.disabled || button.getAttribute?.('aria-disabled') === 'true'
-    || button.getAttribute?.('aria-busy') === 'true';
-  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  function waitForResponse(button, previousRejected) {
-    return new Promise((resolve) => {
-      const previous = find('promo-error-message');
-      const previousText = previous?.textContent.trim();
-      let changed = false;
-      let submitted = false;
-      const observer = new MutationObserver((records) => {
-        const alert = find('promo-error-message');
-        changed ||= records.some(({ type, target }) => type !== 'attributes' && alert?.contains(target));
-        // A completed request can leave the same rejection text in place.
-        submitted ||= records.some(({ target, attributeName, oldValue }) => target === button && (
-          (attributeName === 'disabled' && oldValue !== null)
-          || (['aria-disabled', 'aria-busy'].includes(attributeName) && oldValue === 'true')
-        ));
-      });
-      observer.observe(document.body, {
-        childList: true, characterData: true, subtree: true, attributeOldValue: true,
-        attributeFilter: ['disabled', 'aria-disabled', 'aria-busy'],
-      });
-      const started = performance.now();
-      const timer = setInterval(() => {
-        const alert = find('promo-error-message');
-        const error = alert?.textContent.trim();
-        if (applied()) finish('accepted');
-        else if (error && (changed || alert !== previous || error !== previousText
-          || (previousRejected && submitted && !unavailable(button)))) {
-          finish(/invalid|max redemptions|not (?:valid|applicable|apply|recognised|recognized)|expired|cannot be applied|does not apply|aren.t eligible|requirements/i
-            .test(error) ? 'rejected' : 'unknown');
-        } else if (performance.now() - started >= 5000) finish('unknown');
-      }, 100);
-
-      function finish(outcome) {
-        clearInterval(timer);
-        observer.disconnect();
-        resolve(outcome);
-      }
-
-      button.click();
-    });
-  }
-
-  if (!candidates.length || !input() || !addButton()) return { state: 'unavailable' };
-  if (applied()) return { state: 'alreadyApplied' };
-  if (input().value.trim()) return { state: 'inputOccupied' };
-  const before = subtotal();
-  if (before === null) return { state: 'unavailable' };
-
-  const progress = { state: 'running', attempted: 0, total: candidates.length, rejected: [] };
-  globalThis.cartScoutCouponTrial = progress;
-  let lastCode = '';
-  let writtenField;
-
-  function complete(result) {
-    Object.assign(progress, result);
-    return progress;
-  }
-
-  function clearWrittenCode() {
-    if (writtenField && input() === writtenField && writtenField.value === lastCode && !applied()) {
-      setInput(writtenField, '');
-    }
-  }
-
-  async function attempt() {
-    try {
-      for (const code of candidates) {
-        const field = input();
-        if (!field || !addButton() || applied() || subtotal() !== before
-          || (field.value && field.value !== lastCode)) {
-          return complete({ state: 'changed' });
-        }
-        lastCode = code;
-        writtenField = field;
-        setInput(field, code);
-        const deadline = performance.now() + 500;
-        let button = addButton();
-        while (button && unavailable(button) && !progress.stopRequested && performance.now() < deadline) {
-          await pause(25);
-          button = addButton();
-        }
-        if (progress.stopRequested) {
-          clearWrittenCode();
-          return complete({ state: 'stopped' });
-        }
-        if (!button || unavailable(button) || field !== input() || field.value !== code
-          || applied() || subtotal() !== before) {
-          clearWrittenCode();
-          return complete({ state: 'changed' });
-        }
-        progress.attempted += 1;
-        progress.code = code;
-        const outcome = await waitForResponse(button, progress.rejected.length > 0);
-        if (outcome === 'rejected') {
-          progress.rejected.push(code);
-          if (progress.stopRequested) {
-            clearWrittenCode();
-            return complete({ state: 'stopped' });
-          }
-          continue;
-        }
-        if (outcome !== 'accepted') {
-          clearWrittenCode();
-          return complete({ state: 'unknown', code });
-        }
-
-        // The applied marker can appear just before the subtotal finishes rendering.
-        for (let check = 0; check < 10; check += 1) {
-          const after = subtotal();
-          if (applied() && after !== null && after < before) {
-            return complete({ state: 'saved', code, before, after });
-          }
-          await pause(100);
-        }
-        return complete({ state: 'accepted', code });
-      }
-      clearWrittenCode();
-      return complete({ state: 'noMatch' });
-    } catch {
-      clearWrittenCode();
-      return complete({ state: 'unknown', code: lastCode });
-    }
-  }
-
-  if (background) {
-    void attempt();
-    return progress;
-  }
-  return attempt();
-}
 
 export function readMyproteinBasket() {
   if (location.protocol !== 'https:' || !['www.myprotein.com', 'myprotein.com'].includes(location.hostname)
     || !/^\/basket\/?$/.test(location.pathname)) return [];
 
-  const items = new Map();
+  const pence = (pounds, pennies) => Number(pounds.replaceAll(',', '')) * 100 + Number(pennies);
+  // The prices a row shows, in pence, lowest first: every element whose whole text is one price.
+  // A crossed-out "was" price is not one of them.
+  function shown(row) {
+    const prices = new Set();
+    for (const cell of row.querySelectorAll('*')) {
+      const written = /^£\s?(\d[\d,]*)\.(\d{2})$/.exec((cell.textContent ?? '').trim());
+      if (!written) continue;
+      let crossed = false;
+      for (let node = cell; node && node !== row && !crossed; node = node.parentElement) {
+        crossed = /^(?:S|DEL|STRIKE)$/.test(node.tagName ?? '') || (typeof getComputedStyle === 'function'
+          && /line-through/.test(getComputedStyle(node).textDecorationLine ?? ''));
+      }
+      if (!crossed) prices.add(pence(written[1], written[2]));
+    }
+    return [...prices].sort((low, high) => low - high);
+  }
+
+  // `unit` is the price of one, in pence, and only when the page leaves no doubt about it: a line of one that shows a
+  // single price, or a line of several that shows both the price of one and its total. Anything else stays unknown,
+  // because a line total passed off as the price of one would make every other retailer look cheaper than it is.
+  const lines = [];
+  let plain = true;
+  let hasOtherRow = false;
   for (const row of document.querySelectorAll('main basket-item')) {
     const link = [...row.querySelectorAll('a[href^="/p/"]')].find((anchor) => anchor.textContent.trim());
-    if (!link || !row.querySelector('[data-e2e="basket-remove_item_button"]')) continue;
+    if (!link || !row.querySelector('[data-e2e="basket-remove_item_button"]')) {
+      plain = false;
+      hasOtherRow = true;
+      continue;
+    }
     const name = link.textContent.trim();
     const specs = link?.parentElement.nextElementSibling;
     const variant = specs?.tagName === 'UL'
@@ -186,7 +44,61 @@ export function readMyproteinBasket() {
         .filter(Boolean).join(', ').slice(0, 100)
       : '';
     const branded = (/^myprotein\b/i.test(name) ? name : `Myprotein ${name}`).slice(0, 140);
-    items.set(JSON.stringify([branded, variant]), { name: branded, variant });
+    const prices = shown(row);
+    const typed = row.querySelector('.quantity')?.value;
+    const count = /^[1-9]\d{0,2}$/.test(typed ?? '') ? Number(typed) : 0;
+    let unit = null;
+    if (count === 1 && prices.length === 1) [unit] = prices;
+    else if (count > 1 && prices.length === 2 && prices[1] === prices[0] * count) [unit] = prices;
+    if (!count || prices.length !== 1) plain = false;
+    lines.push({ key: JSON.stringify([branded, variant]), name: branded, variant, count, price: prices[0], prices, unit });
   }
-  return [...items.values()];
+
+  let subtotal = null;
+  if (!hasOtherRow) {
+    for (const label of document.querySelectorAll('main span, main p')) {
+      if (label.childElementCount || label.textContent?.trim() !== 'Basket subtotal:') continue;
+      const money = label.nextElementSibling?.textContent.match(/£\s*([\d,]+)\.(\d{2})/);
+      if (money) {
+        subtotal = pence(money[1], money[2]);
+        break;
+      }
+    }
+  }
+
+  // A line of several that shows one price: is it the price of one, or the line's total? When every row is such a
+  // plain line, the basket subtotal says which, because only one of the two sums can match it.
+  if (plain && lines.some(({ count }) => count > 1) && subtotal !== null) {
+    const each = lines.reduce((sum, { count, price }) => sum + count * price, 0);
+    const totals = lines.reduce((sum, { price }) => sum + price, 0);
+    for (const line of lines) {
+      if (line.count === 1) continue;
+      if (subtotal === each) line.unit = line.price;
+      else if (subtotal === totals && line.price % line.count === 0) line.unit = line.price / line.count;
+    }
+  }
+
+  // A single-product basket with a real basket subtotal settles the unit price even when the row shows two prices
+  // (e.g. RRP/subscription or an applied promo code reducing the subtotal).
+  if (!hasOtherRow && lines.length === 1 && subtotal > 0) {
+    const [only] = lines;
+    if (only.count === 1 && only.prices.length > 0) {
+      if (!only.unit && (only.prices.includes(subtotal) || subtotal < only.prices[only.prices.length - 1])) {
+        only.unit = subtotal;
+      } else if (only.unit && subtotal < only.unit) {
+        only.unit = subtotal;
+      }
+    } else if (only.count > 1 && !only.unit && subtotal % only.count === 0) {
+      const perUnit = subtotal / only.count;
+      if (only.prices.includes(subtotal) || only.prices.includes(perUnit)) only.unit = perUnit;
+    }
+  }
+
+  const items = new Map();
+  for (const { key, name, variant, unit } of lines) {
+    const clash = items.has(key) && items.get(key).unit !== unit;
+    items.set(key, { name, variant, unit: clash ? null : unit });
+  }
+  return [...items.values()].map(({ name, variant, unit }) => (unit > 0
+    ? { name, variant, price: unit / 100, currency: 'GBP' } : { name, variant }));
 }

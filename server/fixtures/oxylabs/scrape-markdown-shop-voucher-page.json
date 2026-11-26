@@ -1,0 +1,31 @@
+{
+  "state": "done",
+  "results": [
+    {
+      "html": null,
+      "markdown": "# Voucher codes and offers\n\n[Skip to content](#main)\n\n## This month\n\n**15% off your first order** - use code: **HELLO15**\n\nFree delivery over £30 with code FREEDEL30 at checkout.\n\n[Shop all offers](/offers/)\n\n## Help\n\nGift card code problems? Enter the code on your card at payment.\n\nOrder code: 10530943\n",
+      "screenshot": null,
+      "json": null,
+      "metadata": {
+        "page": 1,
+        "run_js": false,
+        "url": "https://www.scoutfixtureshop.com/offers/voucher-codes/",
+        "statuses": {
+          "http_request": { "code": 200, "tag": "HTTP_OK" }
+        }
+      }
+    }
+  ],
+  "params": {
+    "url": "https://www.scoutfixtureshop.com/offers/voucher-codes/",
+    "output": ["markdown"],
+    "json": { "schema": null, "prompt": null },
+    "location": "GB",
+    "device": "desktop",
+    "run_js": null
+  },
+  "metadata": {
+    "timestamp": 1795694401,
+    "request_id": "7517850129655711001"
+  }
+}

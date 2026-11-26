@@ -1,0 +1,19 @@
+{
+  "status": 500,
+  "state": "faulted",
+  "title": "REQUEST_FAILED_AFTER_TOO_MANY_RETRIES",
+  "detail": "The request failed after the maximum number of retries. You can try again at no extra cost, as we don't charge you for faulted scrapes.",
+  "instance": "6ad5c789-3cb04e139b34a1eaee352bae",
+  "params": {
+    "url": "https://blocked.example.net/p/scout-fixture-whey",
+    "output": ["html"],
+    "json": { "schema": null, "prompt": null },
+    "location": "GB",
+    "device": "desktop",
+    "run_js": null
+  },
+  "metadata": {
+    "timestamp": 1795694405,
+    "request_id": "7517850129655711005"
+  }
+}
