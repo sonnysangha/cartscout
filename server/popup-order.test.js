@@ -22,16 +22,17 @@ test('a single unconfirmed group on Pro needs no heading', () => {
   assert.deepEqual(titles([{ code: 'A1B2', worked: 0, failed: 0 }], true), []);
 });
 
-test('the shopper’s own thumbs-up alone does not make a code "worked for others"', () => {
+test('the shopper’s own thumbs-up promotes the code to the top ("Worked for you") and never leaves it in unconfirmed', () => {
   const own = { code: 'MORE', worked: 1, failed: 0, myReport: 1 };
   assert.equal(othersUp(own), 0);
   assert.equal(leads(own), false);
   assert.equal(isWorking(own, true), false);
   const arranged = arrange([own]);
+  assert.deepEqual(codes(arranged.worked), ['MORE']);
   assert.deepEqual(arranged.confirmed, []);
-  assert.deepEqual(codes(arranged.rest), ['MORE']);
-  assert.deepEqual(titles([own], true), []);
-  // One more member agreeing is what confirms it.
+  assert.deepEqual(arranged.rest, []);
+  assert.deepEqual(titles([own], true), [HEADINGS.workedYou]);
+  // One more member agreeing is what confirms it for other members.
   assert.equal(isWorking({ ...own, worked: 2 }, true), true);
 });
 
@@ -58,15 +59,16 @@ test('confirmed codes are ordered by net support, then thumbs-up, then the serve
     { code: 'NET3-UP5', worked: 5, failed: 2 },
     { code: 'REST2', worked: 1, failed: 4 },
     { code: 'NET1-LATER', worked: 2, failed: 1 },
-    // Three thumbs up, but one of them is the shopper's own: net support from others is 2.
+    // Three thumbs up, including the shopper's own: promoted to the top `worked` group.
     { code: 'NET2-MINE', worked: 3, failed: 0, myReport: 1 },
   ];
-  const { confirmed, rest, onPage, listed } = arrange(list);
-  assert.deepEqual(codes(confirmed), ['NET3-UP5', 'NET3-UP3', 'NET2-MINE', 'NET1', 'NET1-LATER']);
+  const { worked, confirmed, rest, onPage, listed } = arrange(list);
+  assert.deepEqual(codes(worked), ['NET2-MINE']);
+  assert.deepEqual(codes(confirmed), ['NET3-UP5', 'NET3-UP3', 'NET1', 'NET1-LATER']);
   assert.deepEqual(codes(rest), ['REST1', 'REST2']);
   assert.deepEqual(onPage, []);
   assert.equal(listed, 7);
-  assert.deepEqual(titles(list, true), [HEADINGS.confirmed, HEADINGS.rest]);
+  assert.deepEqual(titles(list, true), [HEADINGS.workedYou, HEADINGS.confirmed, HEADINGS.rest]);
 });
 
 test('Free shows no member headings', () => {
@@ -79,7 +81,7 @@ test('Free shows no member headings', () => {
   assert.deepEqual(withPage, [HEADINGS.page, HEADINGS.web]);
   for (const title of [HEADINGS.confirmed, HEADINGS.rest]) assert.ok(!withPage.includes(title));
   // The web codes are one group on Free, in the same order a run tries them.
-  const [, [, web]] = groupsFor(arrange(list, [{ code: 'EXTRA', offer: '5% off' }]), false);
+  const [, , [, web]] = groupsFor(arrange(list, [{ code: 'EXTRA', offer: '5% off' }]), false);
   assert.deepEqual(codes(web), ['UP', 'PLAIN']);
 });
 
@@ -128,19 +130,48 @@ test('the same code in two casings is one ticket, keeping the one with more thum
   assert.deepEqual(printable(undefined), []);
 });
 
-test('a code that worked for the shopper alone sits under a heading that stays true', () => {
-  // The run filed the shopper's own thumbs-up. Nobody else has confirmed the code, and the heading says exactly that:
-  // it never calls the code unconfirmed, only unconfirmed by other members.
+test('a code that worked for the shopper sits at the very top, never under "Not confirmed by other members"', () => {
   const list = [
     { code: 'SHARED', worked: 3, failed: 0, myReport: null },
     { code: 'MINE', worked: 1, failed: 0, myReport: 1 },
+    { code: 'OTHER', worked: 0, failed: 2, myReport: null },
   ];
   const groups = groupsFor(arrange(list), true);
+  assert.deepEqual(shownTitles(groups), [HEADINGS.workedYou, HEADINGS.confirmed, HEADINGS.rest]);
   const [title, group] = groups.find(([, coupons]) => coupons.some(({ code }) => code === 'MINE'));
-  assert.equal(title, HEADINGS.rest);
-  assert.equal(HEADINGS.rest, 'Not confirmed by other members');
+  assert.equal(title, HEADINGS.workedYou);
   assert.deepEqual(codes(group), ['MINE']);
-  assert.doesNotMatch(HEADINGS.rest, /yet$/);
+  assert.notEqual(title, HEADINGS.rest);
+});
+
+test('a checkout run puts the best saving first and all working codes at the top under "Worked on your basket"', () => {
+  const list = [
+    { code: 'NATIVE10', worked: 2, failed: 0, myReport: 1 },
+    { code: 'WELCOME15', worked: 2, failed: 0, myReport: 1 },
+    { code: 'ALYSSACHANG', worked: 1, failed: 0, myReport: 1 },
+    { code: 'EXPIRED30', worked: 0, failed: 3, myReport: 0 },
+  ];
+  const run = {
+    status: 'saved',
+    code: 'ALYSSACHANG',
+    saving: { code: 'ALYSSACHANG', amount: 5.8 },
+    results: [
+      { code: 'NATIVE10', outcome: 'applied', saved: 2.9, vote: true },
+      { code: 'WELCOME15', outcome: 'applied', saved: 4.35, vote: true },
+      { code: 'ALYSSACHANG', outcome: 'applied', saved: 5.8, vote: true },
+      { code: 'EXPIRED30', outcome: 'rejected', vote: false },
+    ],
+  };
+  const arranged = arrange(list, [], run);
+  assert.deepEqual(codes(arranged.worked), ['ALYSSACHANG', 'WELCOME15', 'NATIVE10']);
+  assert.equal(arranged.workedFromRun, true);
+  assert.deepEqual(codes(arranged.confirmed), []);
+  assert.deepEqual(codes(arranged.rest), ['EXPIRED30']);
+  const groups = groupsFor(arranged, true);
+  assert.deepEqual(shownTitles(groups), [HEADINGS.workedBasket, HEADINGS.rest]);
+  assert.deepEqual(codes(groups[0][1]), ['ALYSSACHANG', 'WELCOME15', 'NATIVE10']);
+  // On Free plan, codes that worked on the shopper's basket still appear at the top too.
+  assert.deepEqual(shownTitles(groupsFor(arranged, false)), [HEADINGS.workedBasket, HEADINGS.web]);
 });
 
 test('shortcuts are on unless they were switched off', () => {

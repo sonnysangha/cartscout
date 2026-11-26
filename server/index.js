@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { createDiscovery, normalizeCode, normalizeMerchant, registrableDomain, SCAN_CEILING } from './oxylabs.js';
 import { createAlternativeDiscovery, LOOKUP_CEILING, parseBasket, retryCost } from './alternatives.js';
 import { LOOKUP_LIFETIME, openStore, reporterKey, SCAN_LIFETIME } from './store.js';
+import { openConvexStore } from './convex-store.js';
 import { createClerkAuthenticator } from './auth.js';
 import { budgetMessage, createBudget } from './budget.js';
 import { readConfig } from './config.js';
@@ -107,16 +108,20 @@ export function createCouponServer({
     });
   }
 
-  function accountDetails(identity, reporter) {
+  async function accountDetails(identity, reporter) {
     return {
       userId: identity.userId,
       plan: identity.plan,
-      scans: identity.plan === 'free' ? store.weeklyScans(reporter, now()) : null,
+      scans: identity.plan === 'free' ? await store.weeklyScans(reporter, now()) : null,
     };
   }
 
-  function payload(merchant, cacheKey, reporter, source, identity) {
-    const search = store.get(cacheKey);
+  async function payload(merchant, cacheKey, reporter, source, identity) {
+    const [search, coupons, account] = await Promise.all([
+      store.get(cacheKey),
+      store.listing(cacheKey, reporter, now()),
+      identity ? accountDetails(identity, reporter) : Promise.resolve(null),
+    ]);
     return {
       merchant, source, refreshedAt: search?.refreshed_at ?? null, partial: !!search?.partial,
       // fetchedAt is when the pages behind this list were read, and freshUntil when the list stops counting as fresh.
@@ -124,24 +129,24 @@ export function createCouponServer({
       ...(search && { fetchedAt: iso(search.refreshed_at), freshUntil: iso(search.retry_at) }),
       ...(search?.reused && { reused: true }),
       ...(search?.seeded && { seeded: true }),
-      coupons: store.listing(cacheKey, reporter, now()),
-      ...(identity && { account: accountDetails(identity, reporter) }),
+      coupons,
+      ...(account && { account }),
     };
   }
 
   // What the server already holds about a shop (or a sibling subdomain on the same brand domain, e.g.
   // `uk.ridge.com` <-> `ridge.com`) that answers a scan without sending another request.
-  function shopRecord(merchant) {
-    const exact = store.shopScan(merchant);
+  async function shopRecord(merchant) {
+    const exact = await store.shopScan(merchant);
     if (exact?.result.complete) return exact;
     const domain = registrableDomain(merchant);
-    const sibling = domain ? store.shopScanByDomain(domain) : null;
+    const sibling = domain ? await store.shopScanByDomain(domain) : null;
     if (sibling && (!exact || sibling.fetchedAt > exact.fetchedAt)) return sibling;
     return exact;
   }
 
-  function alreadyRead(merchant, time) {
-    const record = shopRecord(merchant);
+  async function alreadyRead(merchant, time) {
+    const record = await shopRecord(merchant);
     if (mode === 'replay') {
       // Replay answers from whatever is saved, however old, and treats it as a scan made now.
       const saved = record ?? replay?.scan(merchant);
@@ -152,17 +157,17 @@ export function createCouponServer({
   }
 
   // Starts a live read of a shop and holds its worst case against the budget first, or says why it may not start.
-  function startReading(merchant, time) {
+  async function startReading(merchant, time) {
     // In replay a shop nobody saved takes the same path as a shop that could not be read.
     if (mode === 'replay') return { read: Promise.reject(new Error(`Nothing is saved to replay for ${merchant}`)) };
-    const mark = store.scanFailure(merchant);
+    const mark = await store.scanFailure(merchant);
     if (mark?.retry_at > time) return { refused: failedRecently(mark, time) };
     if (mode === 'off') return { refused: liveOff() };
     if (!discover) return { refused: new HttpError(503, 'Coupon search is unavailable.') };
     if (reading.size >= 5 || discoveryCount >= 15) {
       return { refused: new HttpError(429, 'Coupon search is busy. Try again shortly.') };
     }
-    const { ticket, refused } = budget.reserve('scan', SCAN_CEILING, time);
+    const { ticket, refused } = await budget.reserve('scan', SCAN_CEILING, time);
     if (refused) return { refused: budgetReached('scan', refused) };
 
     discoveryCount += 1;
@@ -170,14 +175,14 @@ export function createCouponServer({
       try {
         const result = await discover(merchant, { ticket });
         const fetchedAt = now();
-        store.clearScanFailure(merchant);
-        store.saveShopScan(merchant, result, fetchedAt);
+        await store.clearScanFailure(merchant);
+        await store.saveShopScan(merchant, result, fetchedAt);
         return { result, fetchedAt, seeded: false };
       } catch (error) {
-        store.markScanFailure(merchant, now());
+        await store.markScanFailure(merchant, now());
         throw error;
       } finally {
-        ticket.release();
+        await ticket.release();
         reading.delete(merchant);
       }
     })();
@@ -187,28 +192,29 @@ export function createCouponServer({
 
   // When live work cannot run, the member still gets what is saved: their own list, or the shop's last read when
   // that is newer. Nothing is sent and no weekly scan is used.
-  function savedAnswer(merchant, cacheKey, reporter, identity, time) {
-    const own = store.get(cacheKey);
-    const record = shopRecord(merchant);
+  async function savedAnswer(merchant, cacheKey, reporter, identity, time) {
+    const own = await store.get(cacheKey);
+    const record = await shopRecord(merchant);
     if (record && (!own || record.fetchedAt > own.refreshed_at)) {
-      store.save(cacheKey, record.result, time, null, { fetchedAt: record.fetchedAt, reused: true, seeded: record.seeded });
+      await store.save(cacheKey, record.result, time, null, { fetchedAt: record.fetchedAt, reused: true, seeded: record.seeded });
     } else if (!own) {
       return null;
     }
-    return payload(merchant, cacheKey, reporter, store.get(cacheKey).retry_at > time ? 'cache' : 'stale', identity);
+    const current = await store.get(cacheKey);
+    return payload(merchant, cacheKey, reporter, current.retry_at > time ? 'cache' : 'stale', identity);
   }
 
   async function lookup(merchant, cacheKey, reporter, identity, cacheOnly, force = false) {
     const time = now();
-    const cached = store.get(cacheKey);
+    const cached = await store.get(cacheKey);
     if (cacheOnly && pending.has(cacheKey)) {
-      const account = identity && { account: accountDetails(identity, reporter) };
+      const account = identity && { account: await accountDetails(identity, reporter) };
       throw new HttpError(409, 'Scout is still scanning this shop.', { code: 'scan_in_progress', ...account });
     }
     if (!force && cached?.retry_at > time) return payload(merchant, cacheKey, reporter, 'cache', identity);
     // "Saved results only" is a promise that nothing will be spent, signed in or not.
     if (cacheOnly) {
-      const account = identity && { account: accountDetails(identity, reporter) };
+      const account = identity && { account: await accountDetails(identity, reporter) };
       // A scan carries on after the popup that asked for it has closed. Reopening says so, and can join it for free.
       if (pending.has(cacheKey)) {
         throw new HttpError(409, 'Scout is still scanning this shop.', { code: 'scan_in_progress', ...account });
@@ -216,9 +222,9 @@ export function createCouponServer({
       // For Pro members, any fresh shop scan in the shared pool (e.g. from another member or a seed) feeds straight
       // into the extension cache without asking for a fresh scan.
       if (identity?.plan !== 'free') {
-        const ready = alreadyRead(merchant, time);
+        const ready = await alreadyRead(merchant, time);
         if (ready && (!cached || ready.fetchedAt > cached.refreshed_at)) {
-          store.save(cacheKey, ready.result, time, null, {
+          await store.save(cacheKey, ready.result, time, null, {
             fetchedAt: ready.fetchedAt, freshFrom: ready.freshFrom, reused: true, seeded: ready.seeded,
           });
           return payload(merchant, cacheKey, reporter, 'cache', identity);
@@ -238,23 +244,23 @@ export function createCouponServer({
         throw slowDown('That’s a lot of scans at once. Give Scout a minute, then try again.');
       }
       const limited = identity?.plan === 'free';
-      const reservation = limited ? store.reserveScan(reporter, time) : null;
+      const reservation = limited ? await store.reserveScan(reporter, time) : null;
       if (limited && !reservation) {
         throw new HttpError(429, 'You’ve used all 5 free scans for this week.', {
-          code: 'scan_limit', account: accountDetails(identity, reporter),
+          code: 'scan_limit', account: await accountDetails(identity, reporter),
         });
       }
       // The answer comes from pages the server already read, from a read of the same shop that is running for
       // someone else, or from a live read. A Free member's scan counts against their week in all three cases, and
       // their list and thumbs stay their own: only the public pages are shared.
-      const ready = force ? null : alreadyRead(merchant, time);
-      const started = ready ? null : reading.has(merchant) ? { read: reading.get(merchant) } : startReading(merchant, time);
+      const ready = force ? null : await alreadyRead(merchant, time);
+      const started = ready ? null : reading.has(merchant) ? { read: reading.get(merchant) } : await startReading(merchant, time);
       if (started?.refused) {
         // Nothing was read, so nothing is charged: a refused scan leaves the member's weekly scans alone.
-        if (reservation) store.releaseScan(reservation);
-        const saved = savedAnswer(merchant, cacheKey, reporter, identity, time);
+        if (reservation) await store.releaseScan(reservation);
+        const saved = await savedAnswer(merchant, cacheKey, reporter, identity, time);
         if (saved) return saved;
-        if (identity) started.refused.details.account = accountDetails(identity, reporter);
+        if (identity) started.refused.details.account = await accountDetails(identity, reporter);
         throw started.refused;
       }
       const read = ready ? Promise.resolve({ ...ready, reused: true }) : started.read;
@@ -264,10 +270,10 @@ export function createCouponServer({
           const { result, fetchedAt, freshFrom, reused = false, seeded } = await read;
           // A scan that comes back empty because coupon sites could not be read gave the member nothing, so it is free.
           const charged = result.complete || result.coupons.length > 0;
-          store.save(cacheKey, result, now(), charged ? reservation : null, { fetchedAt, freshFrom, reused, seeded });
-          if (reservation && !charged) store.releaseScan(reservation);
+          await store.save(cacheKey, result, now(), charged ? reservation : null, { fetchedAt, freshFrom, reused, seeded });
+          if (reservation && !charged) await store.releaseScan(reservation);
         } catch (error) {
-          if (reservation) store.releaseScan(reservation);
+          if (reservation) await store.releaseScan(reservation);
           throw error;
         } finally {
           endWork(scanning);
@@ -280,7 +286,7 @@ export function createCouponServer({
       return payload(merchant, cacheKey, reporter, 'live', identity);
     } catch (error) {
       log('Coupon discovery failed:', error.message);
-      const saved = savedAnswer(merchant, cacheKey, reporter, identity, now());
+      const saved = await savedAnswer(merchant, cacheKey, reporter, identity, now());
       if (saved) return saved;
       throw new HttpError(502, 'Coupon search is temporarily unavailable. Try again shortly.');
     } finally {
@@ -294,7 +300,7 @@ export function createCouponServer({
       const time = now();
       // Prices are public, so a lookup is shared by everyone who asks about the same product at the same shop.
       const key = JSON.stringify([merchant, country, item.name.toLowerCase(), item.variant.toLowerCase()]);
-      const saved = store.lookup(merchant, country, item);
+      const saved = await store.lookup(merchant, country, item);
       if (mode === 'replay') {
         const answer = saved ?? replay?.lookup(merchant, country, item);
         if (!answer) throw new Error(`Nothing is saved to replay for ${item.name}`);
@@ -324,7 +330,7 @@ export function createCouponServer({
         return refuse(slowDown('That’s a lot of price checks at once. Give Scout a minute, then try again.'));
       }
       // The worst case is held before anything is sent: a search and four pages, or just the pages a retry asks for.
-      const { ticket, refused } = budget.reserve('lookup', retry || LOOKUP_CEILING, time);
+      const { ticket, refused } = await budget.reserve('lookup', retry || LOOKUP_CEILING, time);
       if (refused) return refuse(budgetReached('lookup', refused));
 
       startWork(looking);
@@ -337,13 +343,13 @@ export function createCouponServer({
           const freshUntil = partial
             ? Math.min(now() + LOOKUP_LIFETIME.partial, fetchedAt + LOOKUP_LIFETIME.complete)
             : fetchedAt + LOOKUP_LIFETIME.complete;
-          store.saveLookup(merchant, country, item, { offers: value.offers, partial, pages: value.pages ?? [] }, { fetchedAt, freshUntil });
+          await store.saveLookup(merchant, country, item, { offers: value.offers, partial, pages: value.pages ?? [] }, { fetchedAt, freshUntil });
           return { offers: value.offers, partial, fetchedAt: iso(fetchedAt) };
         } catch (error) {
           if (saved) return fromSaved(true);
           throw error;
         } finally {
-          ticket.release();
+          await ticket.release();
           endWork(looking);
         }
       })();
@@ -412,13 +418,13 @@ export function createCouponServer({
         throw new HttpError(401, 'Sign in to CartScout to continue.', { code: 'sign_in_required' });
       }
       const reporter = reporterKey(identity ? `clerk:${identity.userId}` : token);
-      if (wantsAccount) return send(200, accountDetails(identity, reporter));
+      if (wantsAccount) return send(200, await accountDetails(identity, reporter));
       if (wantsWins) {
         const isPro = !identity || identity.plan === 'pro';
         if (!isPro) {
-          return send(200, { locked: true, count: store.winsCount(now()), wins: [] });
+          return send(200, { locked: true, count: await store.winsCount(now()), wins: [] });
         }
-        return send(200, { locked: false, wins: store.recentWins(now(), 12) });
+        return send(200, { locked: false, wins: await store.recentWins(now(), 12) });
       }
 
       const body = await readJson(request);
@@ -457,10 +463,10 @@ export function createCouponServer({
       const saving = body.worked
         ? { ...(savedAmount !== null && { amount: savedAmount, currency: savedCurrency }), memberName }
         : undefined;
-      if (!store.report(cacheKey, code, reporter, body.worked, now(), saving)) {
+      if (!(await store.report(cacheKey, code, reporter, body.worked, now(), saving))) {
         throw new HttpError(404, 'This code is no longer listed for this shop.');
       }
-      return send(200, payload(merchant, cacheKey, reporter, 'cache', identity));
+      return send(200, await payload(merchant, cacheKey, reporter, 'cache', identity));
     } catch (error) {
       if (error instanceof HttpError) return send(error.status, { error: error.message, ...error.details });
       log('Coupon API request failed:', error.message);
@@ -470,7 +476,8 @@ export function createCouponServer({
 }
 
 /**
- * Builds the API from the environment: Clerk, the database, and Oxylabs in the mode the environment asks for.
+ * Builds the API from the environment: Clerk, the database (Convex when CONVEX_SITE_URL/CONVEX_URL +
+ * CARTSCOUT_CONVEX_SECRET are configured, else local SQLite), and Oxylabs in the mode the environment asks for.
  * In replay and off modes no Oxylabs client is made at all, so the server starts without OXYLABS_WEB_API_KEY.
  */
 export function createFromEnv(env = process.env, { log = console.error } = {}) {
@@ -487,7 +494,13 @@ export function createFromEnv(env = process.env, { log = console.error } = {}) {
     allowedOrigins: env.CLERK_ALLOWED_ORIGINS,
     proPlan: env.CLERK_PRO_PLAN || 'pro',
   });
-  const store = openStore(config.databasePath);
+  const convexSiteUrl = env.CONVEX_SITE_URL?.trim()
+    || (env.CONVEX_URL?.trim() ? env.CONVEX_URL.trim().replace(/\.convex\.cloud\/?$/, '.convex.site') : '');
+  const convexSecret = env.CARTSCOUT_CONVEX_SECRET?.trim();
+  const useConvex = env.CARTSCOUT_USE_SQLITE !== '1' && !!convexSiteUrl && !!convexSecret;
+  const store = useConvex
+    ? openConvexStore({ siteUrl: convexSiteUrl, secret: convexSecret })
+    : openStore(config.databasePath);
   const budget = createBudget({ ledger: store.ledger, daily: config.daily, monthly: config.monthly });
   const live = config.mode === 'live';
   const oxylabs = {
@@ -509,15 +522,17 @@ export function describeOxylabs(config, budget, now = Date.now()) {
     return `Oxylabs: replay. No request is sent. Scans and price lookups are answered from the database and ${config.replayFolder}.`;
   }
   if (config.mode === 'off') return 'Oxylabs: off. No request is sent. Saved results still open.';
-  const { day, month } = budget.status(now);
-  return `Oxylabs: live, ${config.parser} page parsing. Budget in UTC: ${day.used} of ${day.limit} requests used today, `
+  const format = ({ day, month }) => `Oxylabs: live, ${config.parser} page parsing. Budget in UTC: ${day.used} of ${day.limit} requests used today, `
     + `${month.used} of ${month.limit} this month.${config.record ? ` Recording answers to ${config.recordFolder}.` : ''}`;
+  const status = budget.status(now);
+  return status && typeof status.then === 'function' ? status.then(format) : format(status);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { server, budget, config, host, port } = createFromEnv();
-  server.listen(port, host, () => {
+  const { server, store, budget, config, host, port } = createFromEnv();
+  server.listen(port, host, async () => {
     console.log(`CartScout API listening on ${host}:${server.address().port}`);
-    console.log(describeOxylabs(config, budget));
+    console.log(store.kind === 'convex' ? `Store: Convex (${store.siteUrl})` : `Store: SQLite (${config.databasePath})`);
+    console.log(await describeOxylabs(config, budget));
   });
 }

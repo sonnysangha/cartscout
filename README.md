@@ -2,7 +2,7 @@
 
 <img src="assets/icon.svg" alt="" width="72" align="right">
 
-CartScout is a Chrome Manifest V3 extension, Node.js API, and React account portal that helps shoppers save money before they buy. **Scout**, the little yellow shopping cart, discovers public coupon codes for the shop you are visiting, automatically tests them at checkout, and compares the exact product you are viewing (or everything in your basket) against other retailers at home and across borders.
+CartScout is a Chrome Manifest V3 extension, unified **Next.js 16** app (account portal + API routes), and **Convex** real-time backend with **Clerk** auth & billing that helps shoppers save money before they buy. **Scout**, the little yellow shopping cart, discovers public coupon codes for the shop you are visiting, automatically tests them at checkout, and compares the exact product you are viewing (or everything in your basket) against other retailers at home and across borders.
 
 **[Get started with the Oxylabs Web API](https://oxylabs.io/SONNY)** · Affiliate link. Using it supports the channel and helps fund more free builds.
 
@@ -12,22 +12,53 @@ CartScout is a Chrome Manifest V3 extension, Node.js API, and React account port
 
 Every piece of live web intelligence in CartScout — **coupon discovery**, **source verification**, **geo-targeted retailer search**, and **structured product/price/stock extraction** — is built on the **[Oxylabs Web API](https://oxylabs.io/SONNY)** (`https://webapi.oxylabs.io/v1/search` and `https://webapi.oxylabs.io/v1/scrape`).
 
-Rather than maintaining fragile per-site scrapers or hitting anti-bot blocks from a shopper’s browser, the Chrome extension delegates all external discovery to the CartScout Node backend ([`server/`](server/)), which funnels every outbound call through a single ticket-gated Oxylabs client (`createOxylabsClient` in [`server/oxylabs.js`](server/oxylabs.js)).
+Rather than maintaining fragile per-site scrapers or hitting anti-bot blocks from a shopper’s browser, the Chrome extension delegates all external discovery to the unified Next.js API (`app/v1/*`) and **Convex Actions** (`convex/oxylabs.ts`), which funnel every outbound call through a single ticket-gated Oxylabs client (`createOxylabsClient` in [`server/oxylabs.js`](server/oxylabs.js)).
+
+### Architecture Overview
 
 ```mermaid
 flowchart LR
-  Ext["Chrome Extension (Popup + Auto-Try Panel)"]
-  Portal["React Account Portal (Clerk + Recent Wins)"]
-  API["CartScout Node API (server/index.js)"]
-  Cache["SQLite Cache + Request Ledger (data/cartscout.sqlite)"]
+  Ext["Chrome Extension (MV3 + esbuild)"]
+  Next["Unified Next.js 16 App (app/ + proxy.ts)\n• Account Portal UI\n• /v1/coupons, /alternatives, /reports, /wins"]
+  Convex["Convex Cloud (convex/)\n• 9 Indexed Tables + Real-Time Pulse\n• Oxylabs Actions (10-min runtime)\n• Atomic UTC Ledger & Hourly Cron"]
   OxySearch["Oxylabs Web API /v1/search"]
   OxyScrape["Oxylabs Web API /v1/scrape (Markdown + AI JSON / JS Render)"]
 
-  Ext -->|"POST /v1/coupons, /v1/alternatives, /v1/reports"| API
-  Portal -->|"GET /v1/wins, /v1/account"| API
-  API <-->|"24h domain-aware scan cache, 6h price lookups, UTC ledger"| Cache
-  API -->|"Ticket-gated search (location-targeted)"| OxySearch
-  API -->|"Ticket-gated page scrape (output: markdown + json)"| OxyScrape
+  Ext -->|"HTTPS + Clerk Bearer JWT"| Next
+  Next <-->|"ConvexProviderWithClerk (WebSockets) + /internal/rpc"| Convex
+  Convex -->|"Ticket-gated search (location-targeted)"| OxySearch
+  Convex -->|"Ticket-gated page scrape (output: markdown + json)"| OxyScrape
+```
+
+### Oxylabs Web API in 10 Seconds (ELI5)
+
+CartScout uses just **two** Oxylabs Web API endpoints to turn any store or product into verified, structured data:
+
+```mermaid
+flowchart TD
+  Need["CartScout needs live web data\n(coupons for a store OR competing retailer prices)"]
+  Need --> Search["1. POST /v1/search\nGeo-targeted Google Search\n(returns top organic URLs for GB, US, DE, ...)"]
+  Search --> Pick["Rank & pick best pages\n(official store + open coupon sites\nOR up to 4 competing retailers)"]
+  Pick --> Scrape["2. POST /v1/scrape\nParallel page fetch with anti-bot handling\n(output: Markdown + AI JSON, or JS render fallback)"]
+  Scrape --> Verify["Deterministic Verification\n• Coupon code must appear literally in raw Markdown\n• Product variant, unit size & stock text must match"]
+  Verify --> Store["Save structured result to Convex\n(reused by every shopper)"]
+```
+
+### How Coupon Search + 24-Hour Domain-Aware Caching Works (ELI5)
+
+Most opens never touch Oxylabs at all. CartScout caches every completed shop scan in **Convex** (`shop_scans`) for **24 hours** and automatically shares it across regional subdomains of the same brand (e.g. `uk.ridge.com` ↔ `ridge.com`, `uk.store.anker.com` ↔ `uk.anker.com`):
+
+```mermaid
+flowchart TD
+  Open["Shopper opens CartScout on a store\n(e.g. uk.ridge.com)"]
+  Open --> CheckCache{"Fresh scan in Convex?\n(exact host OR same brand domain\nwithin last 24 hours)"}
+
+  CheckCache -->|"YES — Cache Hit (< 50ms)"| Fast["Return cached codes + community thumbs\n(0 Oxylabs requests spent)"]
+
+  CheckCache -->|"NO — Cache Miss / Expired / Rescan"| Reserve["Reserve atomic ticket in Convex UTC Ledger\n(max 6 requests, enforces daily & monthly cap)"]
+  Reserve --> RunOxy["Convex Action calls Oxylabs Web API\n• 1 × /v1/search (find official + coupon pages)\n• up to 5 × /v1/scrape (Markdown + AI JSON)"]
+  RunOxy --> Save["Save verified codes to Convex shop_scans & coupons\n+ release unused ledger slots"]
+  Save --> Fast
 ```
 
 ### 1. Single Ticket-Gated Oxylabs Client ([`server/oxylabs.js`](server/oxylabs.js))
@@ -127,44 +158,44 @@ You need **Node.js 24.14 or newer**, **Chrome 120 or newer**, and `zip` / `unzip
 
 ```bash
 npm ci
-npm ci --prefix portal
 test -e .env || cp .env.example .env
-test -e portal/.env.local || cp portal/.env.example portal/.env.local
 ```
 
-### 2. Configure Oxylabs and Clerk
+### 2. Configure Oxylabs, Clerk, and Convex
 
-1. Create an **[Oxylabs Web API key](https://oxylabs.io/SONNY)** and set `OXYLABS_WEB_API_KEY` in `.env`.
-2. Create a Clerk development application with email sign-in and enable **Clerk Billing for users** with a paid plan slug `pro` ([Clerk Dashboard](https://dashboard.clerk.com/)).
-3. Populate `.env`:
+1. Create an **[Oxylabs Web API key](https://oxylabs.io/SONNY)**.
+2. Create a Clerk development application with email sign-in, enable **Clerk Billing for users** with plan slug `pro` ([Clerk Dashboard](https://dashboard.clerk.com/)), and create the **`convex` JWT template** (audience claim `"aud": "convex"`).
+3. Provision a Convex dev deployment and push your secrets + Oxylabs config directly to Convex (so live Oxylabs actions run inside Convex with a 10-minute runtime and zero Vercel timeout risk):
+
+```bash
+npx convex dev --once
+npx convex env set CLERK_JWT_ISSUER_DOMAIN "https://<your-clerk-instance>.clerk.accounts.dev"
+npx convex env set CARTSCOUT_CONVEX_SECRET "$(openssl rand -hex 32)"
+npx convex env set OXYLABS_WEB_API_KEY "your_oxylabs_web_api_key"
+npx convex env set OXYLABS_LOCATION "GB"
+npx convex env set OXYLABS_PAGE_PARSER "ai"
+npx convex env set OXYLABS_DAILY_REQUESTS "150"
+npx convex env set OXYLABS_MONTHLY_REQUESTS "2000"
+```
+
+4. Populate `.env.local` (alongside the `CONVEX_URL` / `CONVEX_SITE_URL` written by `npx convex dev`):
 
 ```dotenv
-OXYLABS_WEB_API_KEY=your_oxylabs_web_api_key
-OXYLABS_LOCATION=GB
-OXYLABS_MODE=live
-OXYLABS_PAGE_PARSER=ai
-OXYLABS_DAILY_REQUESTS=150
-OXYLABS_MONTHLY_REQUESTS=2000
-PORT=8787
-HOST=127.0.0.1
-DATABASE_PATH=data/cartscout.sqlite
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+NEXT_PUBLIC_CONVEX_URL=https://<your-deployment>.convex.cloud
+NEXT_PUBLIC_CLERK_PRO_PLAN=pro
 
 CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
 CLERK_ALLOWED_ORIGINS=http://localhost:8788,chrome-extension://oiiahmlikdllbbbahedcpbojgohonhao
 CLERK_PRO_PLAN=pro
+CARTSCOUT_CONVEX_SECRET=<same secret set on Convex>
 ```
 
-4. Add the same Clerk publishable key to `portal/.env.local`:
-
-```dotenv
-VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
-```
-
-5. Register the portal and extension origins on your Clerk development instance:
+5. Register the unified Next.js portal and extension origins on your Clerk development instance:
 
 ```bash
-node --env-file=.env --input-type=module <<'JS'
+node --env-file=.env.local --input-type=module <<'JS'
 const origins = process.env.CLERK_ALLOWED_ORIGINS.split(',').map((value) => value.trim());
 if (!process.env.CLERK_SECRET_KEY?.startsWith('sk_test_')) {
   throw new Error('Use a Clerk development secret key for this setup.');
@@ -182,27 +213,20 @@ console.log('CartScout origins registered.');
 JS
 ```
 
-### 3. Start the API and Portal
-
-Run from the repository root in two terminals:
+### 3. Start the unified Next.js app (Portal + API)
 
 ```bash
-npm start
+npm run dev
 ```
+
+Verify the health endpoint:
 
 ```bash
-npm --prefix portal run dev
+curl -fsS http://localhost:8788/health
+# Expected: {"ok":true,"runtime":"nextjs+convex"}
 ```
 
-Verify the API:
-
-```bash
-curl -fsS http://localhost:8787/health
-# Expected: {"ok":true}
-```
-
-- **Backend API:** `http://127.0.0.1:8787`
-- **Account Portal:** `http://localhost:8788`
+- **Portal + API (single origin):** `http://localhost:8788`
 
 ### 4. Package and load the Chrome extension
 
@@ -214,6 +238,19 @@ unzip -o dist/cartscout-1.1.0-local.zip -d dist/cartscout-extension
 1. Open `chrome://extensions` and enable **Developer mode**.
 2. Click **Load unpacked** and select `dist/cartscout-extension`.
 3. Pin CartScout in Chrome’s toolbar, open any shop, and click **Sign in** to sync your Clerk session into the extension.
+
+---
+
+## How the Chrome Extension Is Bundled
+
+Chrome Manifest V3 extensions cannot run inside Next.js — Chrome requires static, self-contained local files (zero remote code, zero runtime `node_modules` resolution). [`scripts/package-extension.js`](scripts/package-extension.js) compiles [`extension/`](extension/) into a production-ready ZIP using **`esbuild`**:
+
+1. **Build-time config & manifest injection:** Reads `--api-origin`, `--portal-origin`, `--sync-origin`, and `CLERK_PUBLISHABLE_KEY` (defaulting locally to the unified Next.js origin `http://localhost:8788`), generates `config.js`, and dynamically rewrites `manifest.json` `host_permissions` to allow only those origins plus Clerk’s Frontend API host.
+2. **ESM bundles for extension contexts:** Bundles `service-worker.js` (including `@clerk/chrome-extension/client` for Clerk Sync Host) and `popup.js` as minified Chrome 120 ESM modules (`format: 'esm'`, `bundle: true`), then enforces `assertSelfContained()` so zero external imports remain at runtime.
+3. **IIFE bundles for page injection (`INJECTED`):**
+   - `extension/panel/panel.js` → `panel.js` (`format: 'iife'`, global `CartScoutPanel`, with CSS inlined as text and fonts inlined as binary so the Shadow DOM dock renders cleanly on any shop without leaking styles).
+   - `extension/autotry/page.js` → `autotry.js` (`format: 'iife'`, global `CartScoutAutoTry`, checked against an 80 KB warn / 110 KB hard fail size budget).
+4. **Static copy, integrity check & ZIP:** Copies `popup.html`, CSS, `fonts/`, and `icons/`, verifies every file referenced by `manifest.json` and HTML exists, and zips the output to `dist/cartscout-<version>[-local].zip` (unpacked to `dist/cartscout-extension` for local Chrome loading).
 
 ---
 
@@ -238,12 +275,12 @@ unzip -o dist/cartscout-1.1.0-local.zip -d dist/cartscout-extension
 
 ```bash
 npm test                                    # Run the full Node test suite
-npm --prefix portal run build               # Production Vite build of the account portal
-npm run package:extension                   # Bundle & zip the MV3 Chrome extension
-npm run start:replay                        # Run the API offline against server/replay/ fixtures
-npm run usage                               # Compare SQLite Oxylabs ledger against Oxylabs balance
-npm run usage -- --local                    # Inspect local SQLite ledger spend offline
-npm run seed:scan -- shop.com SAVE10        # Seed coupon codes into SQLite without calling Oxylabs
+npm run dev                                 # Run unified Next.js 16 app (Portal + /v1/* API) on :8788
+npm run build                               # Production Next.js 16 + TypeScript build
+npm run package:extension                   # Bundle & zip the MV3 Chrome extension with esbuild
+npx convex dev --once                       # Push Convex schema, queries, mutations, and Oxylabs actions
+npm run start:replay                        # Run the standalone Node API offline against server/replay/ fixtures
+npm run usage                               # Compare Oxylabs ledger against Oxylabs balance
 ```
 
 ---
@@ -252,20 +289,23 @@ npm run seed:scan -- shop.com SAVE10        # Seed coupon codes into SQLite with
 
 | Folder | Role |
 | --- | --- |
+| [`app/`](app/) | Unified Next.js 16 App Router: Account Portal page (`page.tsx`, `layout.tsx`) + all `/v1/*` & `/health` Route Handlers |
+| [`components/`](components/) | React portal UI (`CartScoutPortal.jsx`), `ConvexClientProvider.jsx` (Clerk ↔ Convex live WebSocket bridge), Scout art & Clerk theme |
+| [`convex/`](convex/) | Convex Cloud backend: 9 indexed tables (`schema.ts`), coupon/lookup/report queries & mutations (`store.ts`), atomic UTC ledger (`ledger.ts`), live Oxylabs actions (`oxylabs.ts`), Clerk-authenticated real-time feed (`wins.ts`), internal RPC (`http.ts`), and hourly hold cleanup (`crons.ts`) |
 | [`extension/`](extension/) | Chrome MV3 popup, service worker (Clerk Sync Host + background scan/compare runners), in-page checkout panel, universal auto-try engine (`autotry/`), basket/product/page-code readers, and shared brand tokens |
-| [`portal/`](portal/) | React + Vite account portal (`http://localhost:8788`) with Clerk sign-in/billing, live Pro member coupons feed, other-retailer comparison showcase, tabs, and filters |
-| [`server/`](server/) | Node.js HTTP API, Oxylabs Web API client (`oxylabs.js`, `alternatives.js`), local HTML parser (`local-parser.js`), SQLite cache & request ledger (`store.js`, `ledger.js`, `budget.js`), Clerk auth (`auth.js`), replay/recording harness, and unit tests |
-| [`scripts/`](scripts/) | Extension ZIP packager (`package-extension.js`), offline SQLite scan seeder (`seed-scan.js`), and Oxylabs usage reporter (`usage.js`) |
+| [`lib/`](lib/) | Shared Next.js backend helpers (`backend.ts`): Clerk Bearer JWT verification, CORS headers, Convex RPC + Oxylabs action routing |
+| [`server/`](server/) | Reusable Oxylabs Web API client (`oxylabs.js`, `alternatives.js`), local HTML parser (`local-parser.js`), Convex store adapter (`convex-store.js`), SQLite test store (`store.js`), replay harness, and full Node test suite |
+| [`scripts/`](scripts/) | Extension ZIP packager (`package-extension.js`), offline scan seeder (`seed-scan.js`), and Oxylabs usage reporter (`usage.js`) |
 
 ---
 
 ## Packaging for Production
 
-Host the API and account portal over HTTPS with persistent disk for `DATABASE_PATH`, configure the same production Clerk instance across all three surfaces, and build the extension with your deployed origins:
+Deploy the unified Next.js app (e.g. Vercel) connected to your production Convex deployment (`npx convex deploy`), configure the same production Clerk instance across all three surfaces, and build the extension pointing to your deployed origin:
 
 ```bash
 npm run package:extension -- \
-  --api-origin https://api.example.com \
-  --portal-origin https://account.example.com \
+  --api-origin https://cartscout.example.com \
+  --portal-origin https://cartscout.example.com \
   --sync-origin https://clerk.example.com
 ```

@@ -3,9 +3,11 @@
 // long code is cut to fit a sentence.
 // Pure: no DOM and no chrome.*, so the rules are covered by server/popup-order.test.js.
 
-// A heading only ever says what other members reported. What happened on this shopper's own basket is said by the
-// ticket itself, so a code that has just worked for them still sits truthfully under "Not confirmed by other members".
+// Headings truthfully separate codes that worked on this shopper's basket / for them,
+// codes advertised on the page, codes other members confirmed, and unconfirmed codes.
 export const HEADINGS = {
+  workedBasket: 'Worked on your basket',
+  workedYou: 'Worked for you',
   page: 'On this page',
   confirmed: 'Worked for other members',
   rest: 'Not confirmed by other members',
@@ -44,35 +46,99 @@ export function printable(list) {
 
 /**
  * Sort the server's list and the codes read from the shop's own page (`[{ code, offer }]`, codes in upper case)
- * into three groups: codes the shop shows on its page, then codes other members confirmed, then the rest.
- * A page code the server also lists is one ticket, the server's, kept with the page's group.
+ * into four groups:
+ *   1. `worked`: codes that worked on this basket (in `run`) or that this shopper confirmed (`myReport === 1`),
+ *      with the active run's best-saving winner first, then other run winners by highest saving, then net support.
+ *   2. `onPage`: remaining codes the shop shows on its page.
+ *   3. `confirmed`: remaining codes other members confirmed, ordered by net support then thumbs-up.
+ *   4. `rest`: remaining codes not confirmed as working.
+ * A page code the server also lists is one ticket, the server's, kept with `onPage` (or promoted to `worked` if it worked).
  */
-export function arrange(list, pageCodes = []) {
+export function arrange(list, pageCodes = [], run = null) {
   const server = printable(list);
   const listed = new Map(server.map((coupon) => [coupon.code, coupon]));
-  const onPage = pageCodes.map(({ code, offer }) => (listed.has(code)
+  const pageMerged = pageCodes.map(({ code, offer }) => (listed.has(code)
     ? { ...listed.get(code), offer: listed.get(code).offer || offer, onPage: true }
     : { code, reportCode: code, offer, worked: 0, failed: 0, onPage: true, pageOnly: true }));
-  const here = new Set(onPage.map((coupon) => coupon.code));
-  const others = server.filter((coupon) => !here.has(coupon.code));
+  const here = new Set(pageMerged.map((coupon) => coupon.code));
+  const pool = [...pageMerged, ...server.filter((coupon) => !here.has(coupon.code))];
+
+  const results = new Map((run?.results ?? []).map((result) => [String(result?.code ?? '').toUpperCase(), result]));
+  const landed = ['saved', 'applied'].includes(run?.status);
+  const winnerCode = landed && run?.code ? String(run.code).toUpperCase() : '';
+  const savingOf = (coupon) => {
+    const res = results.get(coupon.code);
+    if (winnerCode && coupon.code === winnerCode && Number.isFinite(run?.saving?.amount)) {
+      return run.saving.amount;
+    }
+    return Number.isFinite(res?.saved) ? res.saved : 0;
+  };
+  const workedInRun = (coupon) => (
+    (Boolean(winnerCode) && coupon.code === winnerCode)
+    || results.get(coupon.code)?.outcome === 'applied'
+  );
+  const rejectedInRun = (coupon) => {
+    const outcome = results.get(coupon.code)?.outcome;
+    return outcome === 'rejected' || outcome === 'error';
+  };
+  const workedForMe = (coupon) => workedInRun(coupon) || (!rejectedInRun(coupon) && coupon.myReport === 1);
+
+  const worked = pool.filter(workedForMe)
+    .map((coupon, index) => ({
+      coupon,
+      index,
+      winner: Number(Boolean(winnerCode) && coupon.code === winnerCode),
+      inRun: Number(workedInRun(coupon)),
+      saved: savingOf(coupon),
+      net: tally(coupon.worked) - tally(coupon.failed),
+      up: tally(coupon.worked),
+    }))
+    .sort((a, b) => (
+      b.winner - a.winner
+      || b.inRun - a.inRun
+      || b.saved - a.saved
+      || b.net - a.net
+      || b.up - a.up
+      || a.index - b.index
+    ))
+    .map(({ coupon }) => coupon);
+
+  const workedCodes = new Set(worked.map((coupon) => coupon.code));
+  const onPage = pageMerged.filter((coupon) => !workedCodes.has(coupon.code));
+  const others = server.filter((coupon) => !here.has(coupon.code) && !workedCodes.has(coupon.code));
   const confirmed = others.filter(leads)
     .map((coupon, index) => ({ coupon, index, net: othersUp(coupon) - othersDown(coupon), up: othersUp(coupon) }))
     .sort((a, b) => b.net - a.net || b.up - a.up || a.index - b.index)
     .map(({ coupon }) => coupon);
-  return { onPage, confirmed, rest: others.filter((coupon) => !leads(coupon)), listed: server.length };
+  const rest = others.filter((coupon) => !leads(coupon));
+  const workedFromRun = worked.some(workedInRun);
+  return { worked, workedFromRun, onPage, confirmed, rest, listed: server.length };
 }
 
 /**
  * The groups in display order, each `[title, coupons]`; an empty title means no heading, an empty group no rows.
  */
-export function groupsFor({ onPage, confirmed, rest }, pro) {
-  const split = onPage.length > 0;
-  if (!pro) return [[split ? HEADINGS.page : '', onPage], [split ? HEADINGS.web : '', [...confirmed, ...rest]]];
-  const mixed = confirmed.length > 0 && rest.length > 0;
+export function groupsFor({ worked = [], workedFromRun = false, onPage, confirmed, rest }, pro) {
+  const hasWorked = worked.length > 0;
+  const hasPage = onPage.length > 0;
+  const workedTitle = hasWorked ? (workedFromRun ? HEADINGS.workedBasket : HEADINGS.workedYou) : '';
+  if (!pro) {
+    const web = [...confirmed, ...rest];
+    const split = hasWorked || hasPage;
+    return [
+      [workedTitle, worked],
+      [hasPage ? HEADINGS.page : '', onPage],
+      [split && web.length ? HEADINGS.web : '', web],
+    ];
+  }
+  const hasConfirmed = confirmed.length > 0;
+  const hasRest = rest.length > 0;
+  const hasAboveRest = hasWorked || hasPage || hasConfirmed;
   return [
-    [split ? HEADINGS.page : '', onPage],
-    [confirmed.length ? HEADINGS.confirmed : '', confirmed],
-    [split || mixed ? HEADINGS.rest : '', rest],
+    [workedTitle, worked],
+    [hasPage ? HEADINGS.page : '', onPage],
+    [hasConfirmed ? HEADINGS.confirmed : '', confirmed],
+    [hasAboveRest && hasRest ? HEADINGS.rest : '', rest],
   ];
 }
 

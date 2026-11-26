@@ -7,19 +7,33 @@
     "node": ">=24.14"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env --env-file-if-exists=.env.clerk server/index.js",
-    "start:replay": "OXYLABS_MODE=replay node --env-file-if-exists=.env.clerk server/index.js",
+    "dev": "next dev -H localhost -p 8788",
+    "build": "next build",
+    "start": "next start -H localhost -p 8788",
+    "start:legacy": "node --env-file-if-exists=.env --env-file-if-exists=.env.clerk --env-file-if-exists=.env.local server/index.js",
+    "start:replay": "OXYLABS_MODE=replay CARTSCOUT_USE_SQLITE=1 node --env-file-if-exists=.env.clerk server/index.js",
+    "convex:dev": "convex dev",
+    "convex:deploy": "convex deploy",
     "test": "node --test",
-    "usage": "node --env-file-if-exists=.env scripts/usage.js",
+    "usage": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/usage.js",
     "seed:scan": "node scripts/seed-scan.js",
-    "package:extension": "node --env-file-if-exists=.env --env-file-if-exists=.env.clerk scripts/package-extension.js"
+    "package:extension": "node --env-file-if-exists=.env --env-file-if-exists=.env.clerk --env-file-if-exists=.env.local scripts/package-extension.js"
   },
   "dependencies": {
     "@clerk/backend": "3.33.0",
-    "@clerk/chrome-extension": "3.1.115"
+    "@clerk/chrome-extension": "3.1.115",
+    "@clerk/nextjs": "^7.10.10",
+    "convex": "^1.51.0",
+    "next": "^16.4.6",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@types/node": "^26.6.11",
+    "@types/react": "^19.3.3",
+    "@types/react-dom": "^19.3.0",
     "esbuild": "0.28.2",
-    "jsdom": "^29.1.1"
+    "jsdom": "^29.1.1",
+    "typescript": "^7.0.2"
   }
 }

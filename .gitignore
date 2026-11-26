@@ -1,7 +1,11 @@
 .DS_Store
+.next/
+next-env.d.ts
 .env
 .env.*
 !.env.example
 data/
 node_modules/
 dist/
+.claude/
+agent/

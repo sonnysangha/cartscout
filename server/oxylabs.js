@@ -90,7 +90,7 @@ export function createOxylabsClient({ key, request = fetch, record, now = Date.n
     if (!ticket) throw new Error('An Oxylabs request needs a ticket.');
     const sent = { ...body, ...(location ? { location } : {}) };
     const started = now();
-    const finish = ticket.use({
+    const finish = await ticket.use({
       kind: endpoint === 'search' ? 'search' : body.run_js ? 'read_js' : 'read',
       // A search has no address of its own, so it is filed under the shop it was made for.
       host: endpoint === 'search' ? shop : hostOf(body.url),
@@ -121,7 +121,7 @@ export function createOxylabsClient({ key, request = fetch, record, now = Date.n
       ok = true;
       return data.results;
     } finally {
-      finish(ok, now() - started);
+      await finish(ok, now() - started);
     }
   };
 }

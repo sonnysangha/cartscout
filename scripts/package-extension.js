@@ -20,8 +20,8 @@ function parseOrigin(value) {
   return url;
 }
 
-const api = parseOrigin(values['api-origin'] ?? process.env.API_ORIGIN ?? 'http://localhost:8787');
 const portal = parseOrigin(values['portal-origin'] ?? process.env.PORTAL_ORIGIN ?? 'http://localhost:8788');
+const api = parseOrigin(values['api-origin'] ?? process.env.API_ORIGIN ?? portal.origin);
 const sync = parseOrigin(values['sync-origin'] ?? process.env.CLERK_SYNC_ORIGIN ?? portal.origin);
 const publishableKey = process.env.CLERK_PUBLISHABLE_KEY?.trim();
 const key = publishableKey?.match(/^pk_(?:test|live)_([A-Za-z0-9_-]+={0,2})$/)?.[1];

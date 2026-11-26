@@ -11,11 +11,14 @@ export function createBudget({ ledger, daily = DEFAULT_DAILY_REQUESTS, monthly =
     reserve: (operation, requests, now) => ledger.reserve({ operation, requests, now, daily, monthly }),
     /** Where both budgets stand, counting requests that running operations are still holding. */
     status(now) {
-      const { day, month, held } = ledger.totals(now);
-      const line = (limit, period) => ({
-        limit, used: period.requests, held, left: Math.max(0, limit - period.requests - held), resetAt: period.to,
-      });
-      return { day: line(daily, day), month: line(monthly, month) };
+      const format = ({ day, month, held }) => {
+        const line = (limit, period) => ({
+          limit, used: period.requests, held, left: Math.max(0, limit - period.requests - held), resetAt: period.to,
+        });
+        return { day: line(daily, day), month: line(monthly, month) };
+      };
+      const result = ledger.totals(now);
+      return result && typeof result.then === 'function' ? result.then(format) : format(result);
     },
   };
 }

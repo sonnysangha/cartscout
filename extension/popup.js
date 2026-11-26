@@ -458,16 +458,6 @@ function applyTrialResults() {
       ticket.setTrial(null, { settled });
     }
   }
-  const heading = list.querySelector('.subhead');
-  if (heading) {
-    const title = heading.dataset.title ?? heading.textContent;
-    const text = run && !RUN_ACTIVE.includes(run.status) && run.status !== 'pick' && results.size ? 'Tried on your basket' : title;
-    if (heading.textContent !== text) {
-      const reprint = subhead(text);
-      reprint.dataset.title = title;
-      heading.replaceWith(reprint);
-    }
-  }
   const key = winner ? `${run.startedAt}:${winner.code}` : undefined;
   if (key && key !== shownWinner && view === 'coupons') {
     main.scrollTo({ top: Math.max(0, winner.row.offsetTop - 2), behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
@@ -492,7 +482,15 @@ async function voteOn(coupon, worked) {
     ? { worked: fresh.worked, failed: fresh.failed, myReport: fresh.myReport }
     : { myReport: Number(worked) };
   element('report-status').textContent = `Saved: ${coupon.code} ${worked ? 'worked' : 'didn’t work'} for you.`;
-  setTimeout(remember);
+  if (shown && all.length) {
+    shown = { ...shown, coupons: all };
+    setTimeout(() => {
+      if (shown) renderCoupons(shown, { at: listedAt });
+      remember();
+    }, 350);
+  } else {
+    setTimeout(remember);
+  }
   return counted;
 }
 
@@ -648,19 +646,19 @@ function renderCoupons(data, { fresh = false, tail = { kind: 'end' }, at = Date.
   const pro = account?.plan === 'pro';
   const stale = data.source === 'stale';
   const answered = data.source !== 'none';
-  const arranged = arrange(data.coupons, pageCodes);
-  const { onPage, confirmed, rest, listed } = arranged;
+  const arranged = arrange(data.coupons, pageCodes, run);
+  const { worked, onPage, confirmed, rest, listed } = arranged;
   if (stale && !listed) {
     showCouponError({ code: 'scan_required' });
     return;
   }
 
-  const order = [...onPage, ...confirmed, ...rest];
+  const order = [...worked, ...onPage, ...confirmed, ...rest];
   const count = order.length;
   shown = answered ? data : null;
   coupons = order;
   pageCount = onPage.length;
-  confirmedCount = pro ? confirmed.length : 0;
+  confirmedCount = worked.length + (pro ? confirmed.length : 0);
   const found = count === 1 ? '1 possible code' : `${count} possible codes`;
   const freshness = stale ? (pro ? 'earlier results' : 'from your saved scan')
     : data.source === 'cache' ? (pro ? 'from earlier scans' : 'from your saved scan') : 'checked just now';
@@ -1091,6 +1089,12 @@ let countsTimer;
 async function refreshCounts() {
   try {
     const data = await api('/v1/coupons', { cacheOnly: true });
+    if (Array.isArray(data.coupons) && shown) {
+      shown = { ...shown, coupons: data.coupons };
+      renderCoupons(shown, { at: Date.now() });
+      remember();
+      return;
+    }
     const fresh = new Map(printable(data.coupons).map((coupon) => [coupon.code, coupon]));
     for (const ticket of tickets) {
       const next = fresh.get(ticket.code);
@@ -1151,14 +1155,18 @@ function reflectRun(again = false) {
 function applyRun(next) {
   const cleared = run && !next;
   run = next ?? null;
-  applyTrialResults();
-  syncDock();
+  if (shown && (!run || !RUN_ACTIVE.includes(run.status))) {
+    renderCoupons(shown, { at: listedAt });
+  } else {
+    applyTrialResults();
+    syncDock();
+    reflectRun();
+    reflectVotes();
+  }
   if (cleared && account) {
     look('idle');
     if (summary) say(summary);
   }
-  reflectRun();
-  reflectVotes();
 }
 
 async function startRun({ pick = false } = {}) {
