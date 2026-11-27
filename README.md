@@ -18,7 +18,7 @@
 
 > **Who is this for?** Developers who want to build a real, production-grade Chrome MV3 extension + full-stack SaaS powered by live web intelligence — combining geo-targeted search & parallel scraping (**Oxylabs Web API**), zero-timeout durable backend actions + 24h caching (**Convex** & `@convex-dev/action-cache`), auth + subscription billing (**Clerk**), and a unified **Next.js 16** app.
 
-**This build uses:** Next.js **16.4.6**, React **19.3.1**, Clerk Next.js **7** & Clerk Chrome Extension **3**, Convex **1.51** with `@convex-dev/action-cache`, Oxylabs Web API (`/v1/search` & `/v1/scrape`), esbuild **0.28**, TypeScript **7**, and Node **24.14+**. Exact resolutions are in [`package-lock.json`](package-lock.json).
+**This build uses:** Next.js **16.4.6**, React **19.3.1**, Clerk Next.js **7** & Clerk Chrome Extension **3**, Convex **1.51** with `@convex-dev/action-cache`, Oxylabs Web API (`/v1/search` & `/v1/scrape`), esbuild **0.28**, TypeScript **7**, pnpm, and Node **24.14+**. Exact resolutions are in [`pnpm-lock.yaml`](pnpm-lock.yaml).
 
 ---
 
@@ -174,7 +174,7 @@ You need **Node.js 24.14 or newer**, **Chrome 120 or newer**, and `zip` / `unzip
 ### 1. Install dependencies
 
 ```bash
-npm ci
+pnpm install
 test -e .env.local || cp .env.example .env.local
 ```
 
@@ -227,7 +227,7 @@ node --env-file=.env.local scripts/seed-convex-demo.js
 ### 3. Start the app + Convex backend (single command)
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 This runs both **Next.js 16** (`http://localhost:8788`, Portal + `/v1/*` API + Oxylabs Simulator) and **`convex dev`** side by side in one terminal.
@@ -245,7 +245,7 @@ curl -fsS http://localhost:8788/health
 ### 4. Package and load the Chrome extension
 
 ```bash
-npm run package:extension
+pnpm package:extension
 unzip -o dist/cartscout-1.1.0-local.zip -d dist/cartscout-extension
 ```
 
@@ -288,16 +288,16 @@ Chrome Manifest V3 extensions cannot run inside Next.js — Chrome requires stat
 ## Scripts & Testing
 
 ```bash
-npm test                                               # Run the full 219-test Node suite
-npm run dev                                            # Run Next.js 16 (:8788) + Convex backend together
-npm run dev:next                                       # Run only Next.js 16 (:8788)
-npm run dev:convex                                     # Run only Convex backend watcher
-npm run build                                          # Production Next.js 16 + TypeScript build
-npm run package:extension                              # Bundle & zip the MV3 Chrome extension with esbuild
-npx convex dev --once                                  # Push Convex schema, ActionCache, and Oxylabs actions
+pnpm test                                              # Run the full 219-test Node suite
+pnpm dev                                               # Run Next.js 16 (:8788) + Convex backend together
+pnpm dev:next                                          # Run only Next.js 16 (:8788)
+pnpm dev:convex                                        # Run only Convex backend watcher
+pnpm build                                             # Production Next.js 16 + TypeScript build
+pnpm package:extension                                 # Bundle & zip the MV3 Chrome extension with esbuild
+pnpm exec convex dev --once                            # Push Convex schema, ActionCache, and Oxylabs actions
 node --env-file=.env.local scripts/seed-convex-demo.js # Seed 14 real shops + realistic thumbs into Convex
-npm run start:replay                                   # Run standalone Node API offline against server/replay/ fixtures
-npm run usage                                          # Compare Oxylabs ledger against Oxylabs balance
+pnpm start:replay                                      # Run standalone Node API offline against server/replay/ fixtures
+pnpm usage                                             # Compare Oxylabs ledger against Oxylabs balance
 ```
 
 ---
@@ -321,7 +321,7 @@ npm run usage                                          # Compare Oxylabs ledger 
 Deploy the unified Next.js app (e.g. Vercel) connected to your production Convex deployment (`npx convex deploy`), configure the same production Clerk instance across all surfaces, and build the extension pointing to your deployed origin:
 
 ```bash
-npm run package:extension -- \
+pnpm package:extension -- \
   --api-origin https://cartscout.example.com \
   --portal-origin https://cartscout.example.com \
   --sync-origin https://clerk.example.com
