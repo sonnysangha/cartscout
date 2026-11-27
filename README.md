@@ -224,11 +224,13 @@ curl -X PATCH https://api.clerk.com/v1/instance \
 node --env-file=.env.local scripts/seed-convex-demo.js
 ```
 
-### 3. Start the unified Next.js app (Portal + API + Simulator)
+### 3. Start the app + Convex backend (single command)
 
 ```bash
 npm run dev
 ```
+
+This runs both **Next.js 16** (`http://localhost:8788`, Portal + `/v1/*` API + Oxylabs Simulator) and **`convex dev`** side by side in one terminal.
 
 Verify the health endpoint:
 
@@ -287,7 +289,9 @@ Chrome Manifest V3 extensions cannot run inside Next.js — Chrome requires stat
 
 ```bash
 npm test                                               # Run the full 219-test Node suite
-npm run dev                                            # Run unified Next.js 16 app (Portal + /v1/* API) on :8788
+npm run dev                                            # Run Next.js 16 (:8788) + Convex backend together
+npm run dev:next                                       # Run only Next.js 16 (:8788)
+npm run dev:convex                                     # Run only Convex backend watcher
 npm run build                                          # Production Next.js 16 + TypeScript build
 npm run package:extension                              # Bundle & zip the MV3 Chrome extension with esbuild
 npx convex dev --once                                  # Push Convex schema, ActionCache, and Oxylabs actions

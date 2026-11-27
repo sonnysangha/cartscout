@@ -7,7 +7,9 @@
     "node": ">=24.14"
   },
   "scripts": {
-    "dev": "next dev -H localhost -p 8788",
+    "dev": "concurrently -k -n next,convex -c cyan,yellow \"npm:dev:next\" \"npm:dev:convex\"",
+    "dev:next": "next dev -H localhost -p 8788",
+    "dev:convex": "convex dev",
     "build": "next build",
     "start": "next start -H localhost -p 8788",
     "start:legacy": "node --env-file-if-exists=.env --env-file-if-exists=.env.clerk --env-file-if-exists=.env.local server/index.js",
@@ -33,6 +35,7 @@
     "@types/node": "^26.6.11",
     "@types/react": "^19.3.3",
     "@types/react-dom": "^19.3.0",
+    "concurrently": "^10.0.7",
     "esbuild": "0.28.2",
     "jsdom": "^29.1.1",
     "typescript": "^7.0.2"
