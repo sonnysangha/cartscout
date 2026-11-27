@@ -83,7 +83,7 @@ export function createTicket(template, coupon, index, { shared = false, wasCopie
 
   let current = coupon;
   // Only a code the server lists can be answered for.
-  const askable = !coupon.pageOnly;
+  const askable = !coupon.pageOnly && !coupon.pending;
   let revealed = askable && (wasCopied || coupon.myReport === 0 || coupon.myReport === 1);
   let showingCopied = false;
   let copiedTimer;

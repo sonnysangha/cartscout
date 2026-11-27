@@ -427,7 +427,7 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
       return;
     }
     state = next;
-    if (next.country) setMarket(next.country);
+    if (next.country && !next.cached) setMarket(next.country);
     const country = next.country ?? market.value;
     if (next.basket && Array.isArray(next.items) && !clean(query.value)) {
       query.placeholder = `Your basket (${plural(next.items.length, 'item', 'items')})`;
@@ -517,7 +517,7 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
       setVerdict(currencyVerdict(decorated) ?? basketVerdict(decorated, next.checked, next.items.length));
     } else if (decorated[0]) {
       moreRow.hidden = true;
-      tell(next.cached ? 'From a recent comparison · before delivery'
+      tell(next.cached ? `From a recent comparison in ${where} · before delivery`
         : decorated[0].partial && decorated[0].offers.length ? 'Some retailers didn’t answer. Compare again to retry.' : '');
       setVerdict(currencyVerdict(decorated) ?? verdictFor(decorated[0], decorated[0].own));
     }
@@ -719,7 +719,9 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
       savingButton.querySelector('span').textContent = saving.detail;
       savingButton.hidden = false;
       savingTimer = setTimeout(clearSaving, remaining);
-      if (!state && !busy && !edited && clean(query.value) === product.name) showCachedComparison();
+      if (!state && !busy && !edited && saving.country === market.value && clean(query.value) === product.name) {
+        showCachedComparison();
+      }
     },
     moved() {
       clearSaving();

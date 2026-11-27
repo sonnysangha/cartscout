@@ -79,7 +79,8 @@ export function openStore(path) {
       complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
       coupons TEXT NOT NULL,
       seeded INTEGER NOT NULL DEFAULT 0 CHECK (seeded IN (0, 1)),
-      discovery_version INTEGER NOT NULL
+      discovery_version INTEGER NOT NULL,
+      visited_hosts TEXT NOT NULL DEFAULT '[]'
     );
     CREATE TABLE IF NOT EXISTS scan_failures (
       merchant TEXT PRIMARY KEY,
@@ -115,6 +116,12 @@ export function openStore(path) {
     }
   }
 
+  const addColumn = (table, column, definition) => {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!columns.some(({ name }) => name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  };
+  addColumn('shop_scans', 'visited_hosts', "TEXT NOT NULL DEFAULT '[]'");
+
   const shopScan = db.prepare('SELECT * FROM shop_scans WHERE merchant = ? AND discovery_version = ?');
   const shopScanByDomain = db.prepare(`
     SELECT * FROM shop_scans
@@ -123,25 +130,25 @@ export function openStore(path) {
     LIMIT 1
   `);
   const saveShopScan = db.prepare(`
-    INSERT INTO shop_scans (merchant, fetched_at, complete, coupons, seeded, discovery_version) VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO shop_scans (merchant, fetched_at, complete, coupons, seeded, discovery_version, visited_hosts) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (merchant) DO UPDATE SET fetched_at = excluded.fetched_at, complete = excluded.complete,
-      coupons = excluded.coupons, seeded = excluded.seeded, discovery_version = excluded.discovery_version
+      coupons = excluded.coupons, seeded = excluded.seeded, discovery_version = excluded.discovery_version,
+      visited_hosts = excluded.visited_hosts
   `);
   // A shop's record is its latest read, with one exception: a read that missed some sources does not push out a
   // full read from the last day.
-  function keepShopScan(merchant, result, fetchedAt, seeded = false) {
+  function keepShopScan(merchant, result, fetchedAt, seeded = false, visitedHosts = []) {
     const current = shopScan.get(merchant, DISCOVERY_VERSION);
     if (current && (fetchedAt < current.fetched_at
       || (current.complete && !result.complete && fetchedAt - current.fetched_at < SCAN_LIFETIME.complete))) return false;
-    saveShopScan.run(merchant, fetchedAt, Number(result.complete), JSON.stringify(result.coupons), Number(seeded), DISCOVERY_VERSION);
+    saveShopScan.run(
+      merchant, fetchedAt, Number(result.complete), JSON.stringify(result.coupons),
+      Number(seeded), DISCOVERY_VERSION, JSON.stringify(visitedHosts),
+    );
     return true;
   }
 
   atomically(() => {
-    const addColumn = (table, column, definition) => {
-      const columns = db.prepare(`PRAGMA table_info(${table})`).all();
-      if (!columns.some(({ name }) => name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    };
     // Keep older codes and their reports, but rediscover public evidence before showing them.
     for (const table of ['searches', 'coupons']) addColumn(table, 'discovery_version', 'INTEGER NOT NULL DEFAULT 0');
     // "reused": the list was answered from pages read for an earlier scan. "seeded": a developer put it there by hand.
@@ -324,25 +331,31 @@ export function openStore(path) {
     get: (merchant) => search.get(merchant, DISCOVERY_VERSION),
     listing,
     ledger,
-    /** What the server last read about a shop: { result, fetchedAt, seeded }. */
+    /** What the server last read about a shop: { result, fetchedAt, seeded, visitedHosts? }. */
     shopScan(merchant) {
       const row = shopScan.get(merchant, DISCOVERY_VERSION);
-      return row && {
+      if (!row) return row;
+      const visitedHosts = row.visited_hosts ? JSON.parse(row.visited_hosts) : [];
+      return {
         result: { coupons: JSON.parse(row.coupons), complete: !!row.complete },
         fetchedAt: row.fetched_at,
         seeded: !!row.seeded,
+        ...(visitedHosts.length && { visitedHosts }),
       };
     },
     /** Freshest complete scan on the same registrable brand domain (e.g. `ridge.com` covering `uk.ridge.com`). */
     shopScanByDomain(domain) {
       const row = shopScanByDomain.get(DISCOVERY_VERSION, domain, `%.${domain}`);
-      return row && {
+      if (!row) return row;
+      const visitedHosts = row.visited_hosts ? JSON.parse(row.visited_hosts) : [];
+      return {
         result: { coupons: JSON.parse(row.coupons), complete: !!row.complete },
         fetchedAt: row.fetched_at,
         seeded: !!row.seeded,
+        ...(visitedHosts.length && { visitedHosts }),
       };
     },
-    saveShopScan: (merchant, result, now) => keepShopScan(merchant, result, now),
+    saveShopScan: (merchant, result, now, seeded = false, visitedHosts = []) => keepShopScan(merchant, result, now, seeded, visitedHosts),
     scanFailure: (merchant) => failure.get(merchant),
     markScanFailure(merchant, now) {
       saveFailure.run(merchant, now, now + FAILED_SCAN_WAIT);
@@ -369,7 +382,7 @@ export function openStore(path) {
     seedScan(merchant, coupons, now) {
       const result = { coupons, complete: true };
       atomically(() => {
-        saveShopScan.run(merchant, now, 1, JSON.stringify(coupons), 1, DISCOVERY_VERSION);
+        saveShopScan.run(merchant, now, 1, JSON.stringify(coupons), 1, DISCOVERY_VERSION, '[]');
         dropFailure.run(merchant);
         writeScan(merchant, result, now, null, { seeded: true });
       });

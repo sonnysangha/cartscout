@@ -72,17 +72,21 @@ export function openConvexStore({ siteUrl, secret, request = fetch }) {
     kind: 'convex',
     siteUrl: base,
     ledger,
+    startCouponProgress: (token, reporter, merchant) => rpc('couponProgress:start', { token, reporter, merchant }),
+    activeCouponProgress: (reporter, merchant, now) => rpc('couponProgress:active', { reporter, merchant, now }),
+    finishCouponProgress: (token) => rpc('couponProgress:finish', { token }),
     get: (merchant) => rpc('store:getSearch', { merchant }),
     listing: (merchant, reporter, now) => rpc('store:listing', { merchant, reporter, now }),
     shopScan: (merchant) => rpc('store:shopScan', { merchant, domain: registrableDomain(merchant) }),
     shopScanByDomain: (domain) => rpc('store:shopScanByDomain', { domain }),
-    saveShopScan: (merchant, result, fetchedAt, seeded = false) => rpc('store:saveShopScan', {
+    saveShopScan: (merchant, result, fetchedAt, seeded = false, visitedHosts = []) => rpc('store:saveShopScan', {
       merchant,
       domain: registrableDomain(merchant),
       coupons: normCoupons(result.coupons),
       complete: !!result.complete,
       fetchedAt,
       seeded: !!seeded,
+      ...(visitedHosts.length > 0 && { visitedHosts }),
     }),
     scanFailure: (merchant) => rpc('store:scanFailure', { merchant }),
     markScanFailure: (merchant, now) => rpc('store:markScanFailure', { merchant, now }),
@@ -137,11 +141,14 @@ export function openConvexStore({ siteUrl, secret, request = fetch }) {
     }),
     recentWins: (now, limit = 12) => rpc('store:recentWins', { now, limit }),
     winsCount: (now) => rpc('store:winsCount', { now }),
-    discoverShopAction: (merchant, force = false) => rpc('oxylabs:discoverShop', {
+    /** @param {string} merchant @param {boolean} [force] @param {string[]} [excludeHosts] @param {string} [progressToken] */
+    discoverShopAction: (merchant, force = false, excludeHosts = [], progressToken) => rpc('oxylabs:discoverShop', {
       merchant,
       domain: registrableDomain(merchant),
       force: !!force,
-    }, 90_000),
+      ...(excludeHosts.length > 0 && { excludeHosts }),
+      ...(progressToken && { progressToken }),
+    }, progressToken ? 115_000 : 90_000),
     findAlternativesAction: (merchant, country, item, previousPages = null) => rpc('oxylabs:findAlternatives', {
       merchant,
       country,

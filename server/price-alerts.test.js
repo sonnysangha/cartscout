@@ -34,3 +34,16 @@ test('automatic savings require a fresh, like-for-like in-stock offer below the 
   const mustNotLookup = () => assert.fail('A starting price cannot be compared');
   assert.equal(await findCachedSaving(mustNotLookup, 'johnlewis.com', { ...product, from: true }, now), null);
 });
+
+test('automatic savings can select an eligible cached offer in another same-currency market', async () => {
+  const checked = [];
+  const saving = await findCachedSaving(async (_merchant, market) => {
+    checked.push(market);
+    if (market === 'IE') throw new Error('Cache request failed');
+    const price = market === 'FR' ? 210 : 240;
+    return [{ offers: [{ ...offer, currency: 'EUR', price }], freshUntil }];
+  }, 'example.de', { ...product, currency: 'EUR' }, now);
+  assert.deepEqual(checked, ['DE', 'FR', 'IE', 'NL']);
+  assert.equal(saving.country, 'FR');
+  assert.match(saving.title, /cheaper in France/);
+});

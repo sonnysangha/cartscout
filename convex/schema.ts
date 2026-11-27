@@ -33,6 +33,19 @@ export const lookupPageValidator = v.object({
 });
 
 export default defineSchema({
+  coupon_scan_progress: defineTable({
+    token: v.string(),
+    reporter: v.string(),
+    merchant: v.string(),
+    startedAt: v.number(),
+    checked: v.number(),
+    total: v.number(),
+    coupons: v.array(couponItemValidator),
+    finished: v.boolean(),
+  })
+    .index("by_token", ["token"])
+    .index("by_reporter_and_merchant_and_startedAt", ["reporter", "merchant", "startedAt"]),
+
   // Per-shop (Pro) or per-member (Free) scan freshness metadata.
   searches: defineTable({
     merchant: v.string(),

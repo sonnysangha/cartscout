@@ -231,6 +231,8 @@ test('hasPublicCode accepts real coupon-site wording ("Enter CODE at checkout", 
     'https://www.couponsolver.com/promo-codes/shop.example.com',
     'https://wethrift.com/shop-example',
     'https://www.groupon.co.uk/discount-codes/shop',
+    'https://www.wowcher.co.uk/discountcodes/shop.example.com',
+    'https://www.telegraph.co.uk/vouchercodes/shop',
   ]);
   assert.deepEqual(found.coupons.map((c) => c.code), ['HB25', 'EXTRA15']);
 });

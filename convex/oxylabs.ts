@@ -20,9 +20,10 @@ import {
   offerItemValidator,
 } from "./schema";
 
-const SCAN_CEILING = 6;
+const SEARCH_MAX_RESULTS = 20;
+const MAX_SEARCH_EXCLUSIONS = 6;
 const OWN_PAGES = 2;
-const COUPON_SITES = 3;
+const SCAN_CEILING = 1 + SEARCH_MAX_RESULTS + OWN_PAGES + 1;
 const RETAILERS_PER_ITEM = 4;
 const LOOKUP_CEILING = 1 + RETAILERS_PER_ITEM;
 const PAGE_TRIES = 2;
@@ -47,14 +48,127 @@ const MERCHANT_PAGES: Record<string, string> = {
 };
 
 const OPEN_CODE_HOSTS =
-  /(?:^|\.)(?:couponsolver|wethrift|simplycodes|couponbirds|coupert|dontpayfull|worthepenny|knoji|retailmenot|reddit|moneysavingexpert)\./i;
+  /(?:^|\.)(?:couponsolver|wethrift|simplycodes|couponbirds|coupert|dontpayfull|worthepenny|knoji|retailmenot|reddit|moneysavingexpert|dealspotr|couponchief|goodshop|joinhoney)\./i;
 const REVEAL_WALL_HOSTS =
   /(?:^|\.)(?:wowcher|telegraph|glamourmagazine|independent|mirror|express|thesun|dailymail|standard|myvouchercodes|savoo|vouchercodes|vouchercodespro|couponfollow|everysaving)\./i;
+
+const NARROW_DEAL_PATH =
+  /\/(?:deals|deal|comments|thread|threads|discussion|discussions|post|posts|topic|topics)\//i;
+const GENERAL_CODE_HINT =
+  /\b(?:coupon|voucher|promo|discount)\s*codes?\b|\/(?:vouchers?|coupons?|promo-?codes?|discount-?codes?|voucher-?codes?)(?:\/|$)/i;
 
 function siteRank(host: string): number {
   if (OPEN_CODE_HOSTS.test(host)) return 0;
   if (REVEAL_WALL_HOSTS.test(host)) return 2;
   return 1;
+}
+
+function isNarrowDealPage(url: URL, title: string): boolean {
+  const path = url.pathname || "";
+  if (NARROW_DEAL_PATH.test(path) && !GENERAL_CODE_HINT.test(`${title} ${path}`)) {
+    return true;
+  }
+  return (
+    !GENERAL_CODE_HINT.test(`${title} ${url.href}`) &&
+    /\b(?:deal|offer|gift|freebie)\b/i.test(`${title} ${path}`)
+  );
+}
+
+function candidateRank(host: string, narrow: boolean): number {
+  const tier = siteRank(host);
+  if (tier === 2) return 4 + Number(narrow);
+  return (narrow ? 2 : 0) + tier;
+}
+
+function isMerchantHost(host: string, merchant: string, domain: string | null): boolean {
+  if (!host || !merchant) return false;
+  if (host === merchant || host.endsWith(`.${merchant}`)) return true;
+  return !!domain && (host === domain || host.endsWith(`.${domain}`));
+}
+
+function isExcludedHost(host: string, excludeSet: Set<string>): boolean {
+  if (!host || !excludeSet.size) return false;
+  if (excludeSet.has(host)) return true;
+  for (const excluded of excludeSet) {
+    if (host.endsWith(`.${excluded}`)) return true;
+  }
+  return false;
+}
+
+function extractExternalHosts(
+  merchant: string,
+  domain: string | null,
+  coupons: Array<{ sources?: string[] }>,
+  hosts: string[],
+): string[] {
+  const seen = new Set<string>();
+  const add = (value: unknown) => {
+    const host = normalizeMerchant(value);
+    if (host && !isMerchantHost(host, merchant, domain)) seen.add(host);
+  };
+  for (const host of hosts) add(host);
+  for (const coupon of coupons) {
+    if (!Array.isArray(coupon.sources)) continue;
+    for (const src of coupon.sources) add(hostOf(src));
+  }
+  return [...seen];
+}
+
+function mergeCoupons(
+  incoming: Array<{
+    code: string;
+    offer: string;
+    sources: string[];
+    expiresOn: string | null;
+  }>,
+  previous: Array<{
+    code: string;
+    offer: string;
+    sources: string[];
+    expiresOn: string | null;
+  }>,
+  today: string,
+): Array<{
+  code: string;
+  offer: string;
+  sources: string[];
+  expiresOn: string | null;
+}> {
+  const map = new Map<
+    string,
+    { code: string; offer: string; sources: string[]; expiresOn: string | null }
+  >();
+  const add = (coupon: {
+    code: string;
+    offer: string;
+    sources: string[];
+    expiresOn: string | null;
+  }) => {
+    const code = normalizeCode(coupon.code);
+    if (!code) return;
+    const expiresOn =
+      typeof coupon.expiresOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(coupon.expiresOn)
+        ? coupon.expiresOn
+        : null;
+    if (expiresOn && expiresOn < today) return;
+    const sources = Array.isArray(coupon.sources)
+      ? coupon.sources.filter((s): s is string => typeof s === "string")
+      : [];
+    const offer = typeof coupon.offer === "string" ? coupon.offer.trim().slice(0, 180) : "";
+    const cur = map.get(code);
+    if (!cur) {
+      map.set(code, { code, offer, sources: [...new Set(sources)], expiresOn });
+    } else {
+      for (const src of sources) {
+        if (!cur.sources.includes(src)) cur.sources.push(src);
+      }
+      if (!cur.offer && offer) cur.offer = offer;
+      if (!cur.expiresOn && expiresOn) cur.expiresOn = expiresOn;
+    }
+  };
+  for (const c of incoming) add(c);
+  for (const c of previous) add(c);
+  return [...map.values()].slice(0, 24);
 }
 
 function normalizeCode(value: unknown): string | null {
@@ -367,7 +481,7 @@ async function callOxylabs(
 }
 
 /**
- * Runs a live Oxylabs coupon discovery scan directly inside a Convex Action (up to 6 requests),
+ * Runs a live Oxylabs coupon discovery scan directly inside a Convex Action,
  * guarded atomically by the Convex UTC ledger.
  */
 type ReserveResult =
@@ -433,6 +547,7 @@ type CachedShopScanValue = {
   complete: boolean;
   fetchedAt: number;
   seeded: boolean;
+  visitedHosts?: string[];
 };
 
 type CachedAlternativesValue = {
@@ -494,6 +609,248 @@ const alternativesCache: ActionCache<
   log: true,
 });
 
+async function runDiscoverShop(
+  ctx: ActionCtx,
+  {
+    merchant,
+    domain = null,
+    excludeHosts = [],
+    skipOwnPages = false,
+    progressToken,
+  }: {
+    merchant: string;
+    domain?: string | null;
+    excludeHosts?: string[];
+    skipOwnPages?: boolean;
+    progressToken?: string;
+  },
+): Promise<CachedShopScanValue> {
+  const now = Date.now();
+  const { daily, monthly } = readBudgetLimits();
+  const holdId = crypto.randomUUID();
+  const reserved: ReserveResult = await ctx.runMutation(
+    internal.ledger.reserve,
+    {
+      holdId,
+      operation: "scan",
+      requests: skipOwnPages ? 1 + SEARCH_MAX_RESULTS : SCAN_CEILING,
+      now,
+      daily,
+      monthly,
+    },
+  );
+  if (!reserved.ok) {
+    throw new Error(`${BUDGET_REFUSED_PREFIX}${JSON.stringify(reserved.refused)}`);
+  }
+
+  const location = process.env.OXYLABS_LOCATION?.trim().toUpperCase() || "GB";
+  const ai = (process.env.OXYLABS_PAGE_PARSER?.trim().toLowerCase() || "ai") !== "local";
+  const needle = shopNeedle(merchant);
+  const today = new Date(Date.now() - 12 * 3_600_000).toISOString().slice(0, 10);
+  const excludeList = extractExternalHosts(merchant, domain, [], excludeHosts);
+  const excludeSet = new Set(excludeList);
+  const exclusions = excludeList
+    .slice(-MAX_SEARCH_EXCLUSIONS)
+    .map((host) => `-site:${host}`)
+    .join(" ");
+  const query = exclusions
+    ? `${merchant} voucher discount promo coupon codes ${exclusions}`
+    : `${merchant} coupon codes promo codes discount checkout`;
+
+  try {
+    const results = await callOxylabs(
+      ctx,
+      holdId,
+      "scan",
+      "search",
+      {
+        query,
+        max_results: SEARCH_MAX_RESULTS,
+      },
+      location,
+      merchant,
+    );
+
+    const home = `https://${merchant}/`;
+    const own = skipOwnPages ? [] : [home];
+    if (!skipOwnPages && (!location || location === "GB") && Object.hasOwn(MERCHANT_PAGES, merchant)) {
+      own.unshift(MERCHANT_PAGES[merchant]);
+    }
+
+    const others = new Map<string, { href: string; narrow: boolean }>();
+    for (const result of results) {
+      const url = sourceUrl(result.url);
+      const title = typeof result.title === "string" ? result.title : "";
+      if (
+        !url ||
+        !/coupon|voucher|promo|discount|deal|offer|saving/i.test(
+          `${title} ${url.href}`,
+        )
+      ) {
+        continue;
+      }
+      const host = normalizeMerchant(url.hostname);
+      if (!host) continue;
+      if (host === merchant || host.endsWith(`.${merchant}`)) {
+        if (!skipOwnPages && own.length < OWN_PAGES && !own.includes(url.href)) own.push(url.href);
+      } else if (!isExcludedHost(host, excludeSet)) {
+        const narrow = isNarrowDealPage(url, title);
+        const prev = others.get(host);
+        if (!prev || (prev.narrow && !narrow)) {
+          others.set(host, { href: url.href, narrow });
+        }
+      }
+    }
+    const rankedOthers = [...others.entries()].sort(
+      ([hostA, a], [hostB, b]) =>
+        candidateRank(hostA, a.narrow) - candidateRank(hostB, b.narrow),
+    );
+
+    const scrapeBody = (url: string) =>
+      ai
+        ? { url, output: ["markdown", "json"], json: { prompt: couponPrompt(merchant) } }
+        : { url, output: ["markdown"] };
+
+    const outcome = new Map<string, boolean>();
+    const visited = new Set<string>();
+    const rows: Array<{
+      code: string;
+      offer: string;
+      url: string;
+      expiresOn: string | null;
+    }> = [];
+
+    const readPages = async (urls: string[], official: boolean, rendered = false) => {
+      if (!urls.length) return [];
+      // A render retry adds one more read only if the page needs it.
+      if (progressToken && rendered) {
+        await ctx.runMutation(internal.couponProgress.addPages, { token: progressToken, count: urls.length }).catch(() => {});
+      }
+      const results = await Promise.allSettled(urls.map(async url => {
+        const pages = await callOxylabs(
+            ctx,
+            holdId,
+            "scan",
+            "scrape",
+            rendered ? { ...scrapeBody(url), run_js: true } : scrapeBody(url),
+            location,
+            merchant,
+            rendered ? 45_000 : 32_000,
+          ).then(result => result.filter(page => typeof page.markdown === "string"), () => []);
+        const found: typeof rows = [];
+        if (!official) {
+          const host = hostOf(url);
+          if (host) visited.add(host);
+        }
+        outcome.set(url, pages.length > 0);
+        for (const page of pages) {
+          const md = String(page.markdown ?? "");
+          const jsonObj = page.json as
+            | { coupons?: Array<{ code?: unknown; offer?: unknown; expiresOn?: unknown }> }
+            | undefined;
+          const candidates = Array.isArray(jsonObj?.coupons) ? jsonObj.coupons : [];
+          const about = official || squash(url).includes(needle);
+          for (const c of candidates) {
+            const code = normalizeCode(c?.code);
+            if (!code || !hasPublicCode(md, code)) continue;
+            if (!about && !squash(md).includes(needle)) continue;
+            const exp =
+              typeof c.expiresOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(c.expiresOn)
+                ? c.expiresOn
+                : null;
+            if (exp && exp < today) continue;
+            found.push({
+              code,
+              offer: typeof c.offer === "string" ? c.offer.trim().slice(0, 180) : "",
+              url,
+              expiresOn: exp,
+            });
+          }
+        }
+        if (progressToken) {
+          await ctx.runMutation(internal.couponProgress.recordPage, {
+            token: progressToken,
+            coupons: found.slice(0, 24).map(({ url, ...coupon }) => ({ ...coupon, sources: [url] })),
+          }).catch(() => {});
+        }
+        return { pages, found };
+      }));
+      return results.map((result, index) => {
+        if (result.status === "rejected") {
+          outcome.set(urls[index], false);
+          return [];
+        }
+        rows.push(...result.value.found);
+        return result.value.pages;
+      });
+    };
+
+    const external = rankedOthers.slice(0, SEARCH_MAX_RESULTS).map(([, entry]) => entry.href);
+    if (progressToken) {
+      await ctx.runMutation(internal.couponProgress.addPages, { token: progressToken, count: own.length + external.length }).catch(() => {});
+    }
+    const first = await readPages(own, true);
+    const written = (pages: Array<Record<string, unknown>>) =>
+      pages.reduce((t, p) => t + String(p.markdown ?? "").length, 0);
+    const blank = own.filter((u, i) => outcome.get(u) && written(first[i]) < 20);
+    if (!rows.length && blank.length) {
+      await readPages([blank.find((u) => u !== home) ?? blank[0]], true, true);
+    }
+
+    await readPages(external, false);
+
+    const attempted = [...outcome];
+    if (!attempted.length && skipOwnPages) {
+      await ctx.runMutation(internal.store.clearScanFailure, { merchant });
+      return { coupons: [], complete: true, fetchedAt: Date.now(), seeded: false, visitedHosts: [] };
+    }
+    if (attempted.every(([, read]) => !read)) {
+      throw new Error("Oxylabs could not read the coupon sources");
+    }
+
+    const complete = attempted.every(([url, read]) => read || url === home);
+    const map = new Map<
+      string,
+      { code: string; offer: string; sources: string[]; expiresOn: string | null }
+    >();
+    for (const row of rows) {
+      const cur = map.get(row.code);
+      if (!cur) {
+        map.set(row.code, {
+          code: row.code,
+          offer: row.offer,
+          sources: [row.url],
+          expiresOn: row.expiresOn,
+        });
+      } else if (!cur.sources.includes(row.url)) {
+        cur.sources.push(row.url);
+      }
+    }
+
+    const coupons = [...map.values()].slice(0, 24);
+    const fetchedAt = Date.now();
+    await ctx.runMutation(internal.store.clearScanFailure, { merchant });
+    return {
+      coupons,
+      complete,
+      fetchedAt,
+      seeded: false,
+      visitedHosts: [...visited],
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (!msg.startsWith(BUDGET_REFUSED_PREFIX)) {
+      await ctx.runMutation(internal.store.markScanFailure, {
+        merchant,
+        now: Date.now(),
+      });
+    }
+    throw error;
+  } finally {
+    await ctx.runMutation(internal.ledger.release, { holdId });
+  }
+}
+
 /**
  * Uncached live Oxylabs coupon discovery action, wrapped by `shopScanCache`
  * (`@convex-dev/action-cache`, 24h TTL keyed by `key = domain ?? merchant`).
@@ -508,206 +865,25 @@ export const discoverShopUncached = internalAction({
     complete: v.boolean(),
     fetchedAt: v.number(),
     seeded: v.boolean(),
+    visitedHosts: v.optional(v.array(v.string())),
   }),
   handler: async (ctx, args): Promise<CachedShopScanValue> => {
-    const now = Date.now();
-    const { daily, monthly } = readBudgetLimits();
-    const holdId = crypto.randomUUID();
-    const reserved: ReserveResult = await ctx.runMutation(
-      internal.ledger.reserve,
-      {
-        holdId,
-        operation: "scan",
-        requests: SCAN_CEILING,
-        now,
-        daily,
-        monthly,
-      },
-    );
-    if (!reserved.ok) {
-      throw new Error(`${BUDGET_REFUSED_PREFIX}${JSON.stringify(reserved.refused)}`);
-    }
-
-    const location = process.env.OXYLABS_LOCATION?.trim().toUpperCase() || "GB";
-    const ai = (process.env.OXYLABS_PAGE_PARSER?.trim().toLowerCase() || "ai") !== "local";
-    const merchant = args.key;
-    const needle = shopNeedle(merchant);
-    const today = new Date(Date.now() - 12 * 3_600_000).toISOString().slice(0, 10);
-
-    try {
-      const results = await callOxylabs(
-        ctx,
-        holdId,
-        "scan",
-        "search",
-        {
-          query: `${merchant} coupon codes promo codes discount checkout`,
-          max_results: 10,
-        },
-        location,
-        merchant,
-      );
-
-      const home = `https://${merchant}/`;
-      const own = [home];
-      if ((!location || location === "GB") && Object.hasOwn(MERCHANT_PAGES, merchant)) {
-        own.unshift(MERCHANT_PAGES[merchant]);
-      }
-
-      const others = new Map<string, string>();
-      for (const result of results) {
-        const url = sourceUrl(result.url);
-        const title = typeof result.title === "string" ? result.title : "";
-        if (
-          !url ||
-          !/coupon|voucher|promo|discount|deal|offer|saving/i.test(
-            `${title} ${url.href}`,
-          )
-        ) {
-          continue;
-        }
-        const host = normalizeMerchant(url.hostname);
-        if (!host) continue;
-        if (host === merchant || host.endsWith(`.${merchant}`)) {
-          if (own.length < OWN_PAGES && !own.includes(url.href)) own.push(url.href);
-        } else if (!others.has(host)) {
-          others.set(host, url.href);
-        }
-      }
-      const rankedOthers = [...others.entries()]
-        .sort(([a], [b]) => siteRank(a) - siteRank(b))
-        .slice(0, COUPON_SITES)
-        .map(([, href]) => href);
-
-      const scrapeBody = (url: string) =>
-        ai
-          ? { url, output: ["markdown", "json"], json: { prompt: couponPrompt(merchant) } }
-          : { url, output: ["markdown"] };
-
-      const outcome = new Map<string, boolean>();
-      const rows: Array<{
-        code: string;
-        offer: string;
-        url: string;
-        expiresOn: string | null;
-      }> = [];
-
-      const readPages = async (urls: string[], official: boolean, rendered = false) => {
-        const settled = await Promise.allSettled(
-          urls.map((url) =>
-            callOxylabs(
-              ctx,
-              holdId,
-              "scan",
-              "scrape",
-              rendered ? { ...scrapeBody(url), run_js: true } : scrapeBody(url),
-              location,
-              merchant,
-              rendered ? 45_000 : 32_000,
-            ),
-          ),
-        );
-        return urls.map((url, idx) => {
-          const entry = settled[idx];
-          const pages =
-            entry.status === "fulfilled"
-              ? entry.value.filter((p) => typeof p.markdown === "string")
-              : [];
-          outcome.set(url, pages.length > 0);
-          for (const page of pages) {
-            const md = String(page.markdown ?? "");
-            const jsonObj = page.json as
-              | { coupons?: Array<{ code?: unknown; offer?: unknown; expiresOn?: unknown }> }
-              | undefined;
-            const candidates = Array.isArray(jsonObj?.coupons) ? jsonObj.coupons : [];
-            const about = official || squash(url).includes(needle);
-            for (const c of candidates) {
-              const code = normalizeCode(c?.code);
-              if (!code || !hasPublicCode(md, code)) continue;
-              if (!about && !squash(md).includes(needle)) continue;
-              const exp =
-                typeof c.expiresOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(c.expiresOn)
-                  ? c.expiresOn
-                  : null;
-              if (exp && exp < today) continue;
-              rows.push({
-                code,
-                offer: typeof c.offer === "string" ? c.offer.trim().slice(0, 180) : "",
-                url,
-                expiresOn: exp,
-              });
-            }
-          }
-          return pages;
-        });
-      };
-
-      const first = await readPages(own, true);
-      let sent = 1 + own.length;
-      const written = (pages: Array<Record<string, unknown>>) =>
-        pages.reduce((t, p) => t + String(p.markdown ?? "").length, 0);
-      const blank = own.filter((u, i) => outcome.get(u) && written(first[i]) < 20);
-      if (!rows.length && blank.length) {
-        await readPages([blank.find((u) => u !== home) ?? blank[0]], true, true);
-        sent += 1;
-      }
-
-      const remainingSlots = Math.max(0, SCAN_CEILING - sent);
-      if (remainingSlots > 0 && rankedOthers.length > 0) {
-        await readPages(rankedOthers.slice(0, remainingSlots), false);
-      }
-
-      const attempted = [...outcome];
-      if (attempted.every(([, read]) => !read)) {
-        throw new Error("Oxylabs could not read the coupon sources");
-      }
-
-      const complete = attempted.every(([url, read]) => read || url === home);
-      const map = new Map<
-        string,
-        { code: string; offer: string; sources: string[]; expiresOn: string | null }
-      >();
-      for (const row of rows) {
-        const cur = map.get(row.code);
-        if (!cur) {
-          map.set(row.code, {
-            code: row.code,
-            offer: row.offer,
-            sources: [row.url],
-            expiresOn: row.expiresOn,
-          });
-        } else if (!cur.sources.includes(row.url)) {
-          cur.sources.push(row.url);
-        }
-      }
-
-      const coupons = [...map.values()].slice(0, 24);
-      const fetchedAt = Date.now();
-      await ctx.runMutation(internal.store.clearScanFailure, { merchant });
-      return { coupons, complete, fetchedAt, seeded: false };
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      if (!msg.startsWith(BUDGET_REFUSED_PREFIX)) {
-        await ctx.runMutation(internal.store.markScanFailure, {
-          merchant,
-          now: Date.now(),
-        });
-      }
-      throw error;
-    } finally {
-      await ctx.runMutation(internal.ledger.release, { holdId });
-    }
+    return await runDiscoverShop(ctx, { merchant: args.key });
   },
 });
 
 /**
  * Cached coupon discovery backed by `@convex-dev/action-cache` (24h TTL keyed by `domain ?? merchant`).
+ * When a rescan runs while websites were already hit in the last 24h cache window, expands the search
+ * to exclude those sites and merges newly discovered codes with still-valid cached codes.
  */
 export const discoverShop = internalAction({
   args: {
     merchant: v.string(),
     domain: v.union(v.string(), v.null()),
     force: v.optional(v.boolean()),
+    excludeHosts: v.optional(v.array(v.string())),
+    progressToken: v.optional(v.string()),
   },
   returns: v.union(
     v.object({
@@ -727,24 +903,99 @@ export const discoverShop = internalAction({
   handler: async (ctx, args): Promise<DiscoverShopResult> => {
     const key = shopScanKey(args.merchant, args.domain);
     try {
-      const cached: CachedShopScanValue = await shopScanCache.fetch(
-        ctx,
-        { key },
-        { force: Boolean(args.force) },
-      );
-      if (!cached.complete) {
-        await ctx.runMutation(components.actionCache.lib.put, {
-          name: SHOP_SCAN_CACHE_NAME,
-          args: { key },
-          value: cached,
-          ttl: SHOP_SCAN_PARTIAL_TTL,
-        });
+      // Observe the entry ID before reading its value, so a concurrent replacement
+      // cannot be overwritten by a scan that started from an older value.
+      const replacement = await ctx.runQuery(components.actionCache.lib.get, {
+        name: SHOP_SCAN_CACHE_NAME,
+        args: { key },
+        ttl: 0,
+      });
+      const hit = await ctx.runQuery(components.actionCache.lib.get, {
+        name: SHOP_SCAN_CACHE_NAME,
+        args: { key },
+        ttl: SHOP_SCAN_TTL,
+      });
+      const now = Date.now();
+      const cachedValue = hit.kind === "hit" ? (hit.value as CachedShopScanValue) : null;
+      const previous = cachedValue && now - cachedValue.fetchedAt < SHOP_SCAN_TTL
+        ? cachedValue
+        : null;
+
+      if (!args.force && previous?.complete && !(args.excludeHosts?.length)) {
+        return {
+          ok: true as const,
+          coupons: previous.coupons,
+          complete: previous.complete,
+          fetchedAt: previous.fetchedAt,
+        };
       }
+
+      const excludeHosts = extractExternalHosts(
+        args.merchant,
+        args.domain,
+        previous?.coupons ?? [],
+        [...(previous?.visitedHosts ?? []), ...(args.excludeHosts ?? [])],
+      );
+
+      if (!args.progressToken && !args.force && excludeHosts.length === 0) {
+        const cached: CachedShopScanValue = await shopScanCache.fetch(
+          ctx,
+          { key },
+          { force: false },
+        );
+        if (!cached.complete) {
+          await ctx.runMutation(components.actionCache.lib.put, {
+            name: SHOP_SCAN_CACHE_NAME,
+            args: { key },
+            value: cached,
+            ttl: SHOP_SCAN_PARTIAL_TTL,
+          });
+        }
+        return {
+          ok: true as const,
+          coupons: cached.coupons,
+          complete: cached.complete,
+          fetchedAt: cached.fetchedAt,
+        };
+      }
+
+      const skipOwnPages = Boolean(previous?.complete && excludeHosts.length > 0);
+      const fresh = await runDiscoverShop(ctx, {
+        merchant: args.merchant,
+        domain: args.domain,
+        excludeHosts,
+        skipOwnPages,
+        progressToken: args.progressToken,
+      });
+      const today = new Date(fresh.fetchedAt - 12 * 3_600_000).toISOString().slice(0, 10);
+      const mergedCoupons = previous
+        ? mergeCoupons(fresh.coupons, previous.coupons, today)
+        : fresh.coupons;
+      const mergedVisited = extractExternalHosts(args.merchant, args.domain, mergedCoupons, [
+        ...(previous?.visitedHosts ?? []),
+        ...excludeHosts,
+        ...(fresh.visitedHosts ?? []),
+      ]);
+      const complete = fresh.complete || Boolean(previous?.complete);
+      const stored: CachedShopScanValue = {
+        coupons: mergedCoupons,
+        complete,
+        fetchedAt: fresh.fetchedAt,
+        seeded: false,
+        ...(mergedVisited.length > 0 ? { visitedHosts: mergedVisited } : {}),
+      };
+      await ctx.runMutation(components.actionCache.lib.put, {
+        name: SHOP_SCAN_CACHE_NAME,
+        args: { key },
+        value: stored,
+        ttl: complete ? SHOP_SCAN_TTL : SHOP_SCAN_PARTIAL_TTL,
+        expiredEntry: replacement.kind === "miss" ? replacement.expiredEntry : undefined,
+      });
       return {
         ok: true as const,
-        coupons: cached.coupons,
-        complete: cached.complete,
-        fetchedAt: cached.fetchedAt,
+        coupons: stored.coupons,
+        complete: stored.complete,
+        fetchedAt: stored.fetchedAt,
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

@@ -55,6 +55,7 @@ const shopScanReturnValidator = v.union(
     }),
     fetchedAt: v.number(),
     seeded: v.boolean(),
+    visitedHosts: v.optional(v.array(v.string())),
   }),
   v.null(),
 );
@@ -376,6 +377,7 @@ type CachedShopScan = {
   complete: boolean;
   fetchedAt: number;
   seeded: boolean;
+  visitedHosts?: string[];
 };
 
 type CachedLookup = {
@@ -445,6 +447,7 @@ export const shopScan = internalQuery({
       result: { coupons: cached.coupons, complete: cached.complete },
       fetchedAt: cached.fetchedAt,
       seeded: !!cached.seeded,
+      ...(cached.visitedHosts?.length ? { visitedHosts: cached.visitedHosts } : {}),
     };
   },
 });
@@ -464,6 +467,7 @@ export const shopScanByDomain = internalQuery({
       result: { coupons: cached.coupons, complete: cached.complete },
       fetchedAt: cached.fetchedAt,
       seeded: !!cached.seeded,
+      ...(cached.visitedHosts?.length ? { visitedHosts: cached.visitedHosts } : {}),
     };
   },
 });
@@ -476,6 +480,7 @@ export const saveShopScan = internalMutation({
     complete: v.boolean(),
     fetchedAt: v.number(),
     seeded: v.boolean(),
+    visitedHosts: v.optional(v.array(v.string())),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -489,6 +494,7 @@ export const saveShopScan = internalMutation({
         complete: args.complete,
         fetchedAt: args.fetchedAt,
         seeded: args.seeded,
+        ...(args.visitedHosts?.length ? { visitedHosts: args.visitedHosts } : {}),
       },
       ttl,
     });

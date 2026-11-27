@@ -32,14 +32,14 @@ const when = (time) => new Date(time).toISOString();
 test('a shop anyone scanned in the last 24 hours is answered from what the server already read', async (t) => {
   const { call, clock, oxylabs } = await api(t);
   const read = clock.now;
-  const first = (await call('coupons', 'free-a', shop)).body;
+  const first = (await call('coupons', 'free-a', { ...shop, productUrl: 'https://shop.example.com/products/jacket' })).body;
   assert.deepEqual([first.source, first.reused, first.fetchedAt, first.account.scans.remaining], ['live', undefined, when(read), 4]);
   assert.equal(oxylabs.sent.length, 3);
 
   // Twenty-three hours later another Free member scans the same shop. Nothing is sent to Oxylabs. It still counts as
   // one of their scans, and the answer says when the pages were really read.
   clock.now = read + 23 * HOUR;
-  const second = (await call('coupons', 'free-b', shop)).body;
+  const second = (await call('coupons', 'free-b', { ...shop, productUrl: 'https://shop.example.com/products/shoes' })).body;
   assert.deepEqual([second.source, second.reused, second.fetchedAt, second.refreshedAt], ['live', true, when(read), read]);
   assert.deepEqual(second.coupons.map(({ code, sources }) => [code, sources]), [['SAVE10', ['https://shop.example.com/voucher-codes']]]);
   assert.equal(second.account.scans.remaining, 4);
@@ -184,4 +184,82 @@ test('a database from before this change is brought forward, so shops scanned ea
   // The member whose scan it was still has their own list, untouched.
   const own = (await call('coupons', 'free-a', { ...shop, cacheOnly: true })).body;
   assert.deepEqual([own.source, own.reused, own.coupons.map(({ code }) => code).sort()], ['cache', undefined, ['EARLIER10', 'KEPT']]);
+});
+
+test('rescanning within the cache window excludes recently hit websites, expands to new sites, and merges codes', async (t) => {
+  const clock = { now: Date.parse('2026-11-27T12:00:00Z') };
+  const queries = [];
+  const scraped = [];
+  const oxylabs = fakeOxylabs(async ({ endpoint, query, url }) => {
+    if (endpoint === 'search') {
+      queries.push(query);
+      if (query.includes('-site:hotukdeals.com')) {
+        return [
+          // Even if Google somehow returned a subdomain of an excluded host, it must be skipped.
+          { title: 'John Lewis Voucher Codes', url: 'https://m.hotukdeals.com/vouchers/johnlewis.com' },
+          { title: 'John Lewis Promo Codes', url: 'https://www.wethrift.com/john-lewis' },
+          { title: 'John Lewis Discount Codes', url: 'https://simplycodes.com/store/johnlewis.com' },
+          { title: 'John Lewis Voucher Codes', url: 'https://www.moneysavingexpert.com/deals/john-lewis/' },
+          { title: 'John Lewis Coupon Codes', url: 'https://www.couponbirds.com/codes/johnlewis.com' },
+          { title: 'John Lewis Promo Codes', url: 'https://www.coupert.com/coupons/john-lewis' },
+        ];
+      }
+      return [
+        { title: 'Charlotte Tilbury at John Lewis', url: 'https://www.hotukdeals.com/deals/charlotte-tilbury-at-john-lewis-123' },
+      ];
+    }
+    scraped.push(url);
+    if (url.includes('hotukdeals.com')) {
+      return page({
+        markdown: 'Use code: TILBURYDEC80 for 1 free gift when you spend £80 on Charlotte Tilbury at John Lewis.',
+        json: { coupons: [{ code: 'TILBURYDEC80', offer: '1 free gift on Charlotte Tilbury' }] },
+      });
+    }
+    if (url.includes('wethrift.com')) {
+      return page({
+        markdown: 'Enter JL15OFF at checkout to get 15% off John Lewis homeware.',
+        json: { coupons: [{ code: 'JL15OFF', offer: '15% off John Lewis homeware' }] },
+      });
+    }
+    if (url.includes('coupert.com')) {
+      return page({
+        markdown: 'Use code: JLTECH10 for £10 off John Lewis tech.',
+        json: { coupons: [{ code: 'JLTECH10', offer: '£10 off John Lewis tech' }] },
+      });
+    }
+    return page({ markdown: 'John Lewis offers and delivery info.', json: { coupons: [] } });
+  });
+
+  const { call, store } = await startApi(t, {
+    clock,
+    discover: createDiscovery({ key: 'fixture', location: 'GB', request: oxylabs.request, now: () => clock.now }),
+  });
+
+  // 1. Initial scan hits johnlewis.com + hotukdeals.com (only Charlotte Tilbury code found).
+  const first = (await call('coupons', 'pro-c', { merchant: 'johnlewis.com' })).body;
+  assert.deepEqual(first.coupons.map((c) => c.code), ['TILBURYDEC80']);
+  assert.equal(queries.length, 1);
+  assert.ok(!queries[0].includes('-site:'));
+
+  // 2. Two hours later (still in the 24h cache window), user clicks "Search for more codes" (force: true).
+  clock.now += 2 * HOUR;
+  scraped.length = 0;
+  const expanded = (await call('coupons', 'pro-c', { merchant: 'johnlewis.com', force: true })).body;
+  assert.equal(queries.length, 2);
+  assert.ok(queries[1].includes('-site:hotukdeals.com'), `expected -site:hotukdeals.com in query: ${queries[1]}`);
+  // Skipped johnlewis.com home page and hotukdeals.com, using all 5 remaining slots on 5 brand-new websites!
+  assert.deepEqual(scraped, [
+    'https://www.wethrift.com/john-lewis',
+    'https://simplycodes.com/store/johnlewis.com',
+    'https://www.moneysavingexpert.com/deals/john-lewis/',
+    'https://www.couponbirds.com/codes/johnlewis.com',
+    'https://www.coupert.com/coupons/john-lewis',
+  ]);
+  // Newly discovered general John Lewis codes are merged alongside the earlier cached code.
+  assert.deepEqual(expanded.coupons.map((c) => c.code).sort(), ['JL15OFF', 'JLTECH10', 'TILBURYDEC80']);
+  // Accumulated visited hosts include both the first and second waves for any future expansion.
+  const savedScan = store.shopScan('johnlewis.com');
+  assert.ok(savedScan.visitedHosts.includes('hotukdeals.com'));
+  assert.ok(savedScan.visitedHosts.includes('wethrift.com'));
+  assert.ok(savedScan.visitedHosts.includes('coupert.com'));
 });

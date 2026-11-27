@@ -16,6 +16,7 @@ import { readPageCodes } from './page-codes.js';
 import { HANDOVER_KEY, handedHost, handedView } from './handover.js';
 import { AUTOTRY_FILE, pauseKey, pickKey, RUN_LIMIT } from './autotry/limits.js';
 import { pageCall } from './run.js';
+import { COUPON_STREAM_TYPE, mergeProgressCoupons, readCouponStream } from './coupon-stream.js';
 
 const element = (id) => document.getElementById(id);
 const status = element('status');
@@ -40,7 +41,7 @@ const WATCH_NOTE = 'Scout will also let you know on the page.';
 const PORTAL_MEMORY_MS = 15 * 60_000;
 const PRO_PITCH = 'Pro unlocks unlimited weekly scans, live working codes & savings from other Pro members, and shared thumbs on every code.';
 const FOLLOW_EVERY_MS = 2500;
-const FOLLOW_LIMIT_MS = 100_000;
+const FOLLOW_LIMIT_MS = 120_000;
 const PAUSE_MEMORY_MS = 15 * 60_000;
 
 const pinnedTab = Number(new URLSearchParams(location.search).get('tab')) || null;
@@ -253,7 +254,7 @@ function rememberAccount(next) {
 
 function remember() {
   if (!session || !account?.userId || !merchant || !shown) return;
-  const listed = tickets.map((ticket) => ticket.coupon).filter((coupon) => !coupon.pageOnly)
+  const listed = tickets.map((ticket) => ticket.coupon).filter((coupon) => !coupon.pageOnly && !coupon.pending)
     .map(({ onPage, pageOnly, ...coupon }) => coupon);
   const data = {
     source: shown.source,
@@ -316,7 +317,7 @@ function signedOut() {
   renderAccount(null);
 }
 
-async function api(route, fields, { sessionToken, signal, retried = false } = {}) {
+async function api(route, fields, { sessionToken, signal, retried = false, onProgress } = {}) {
   const token = sessionToken ?? await getClerkToken();
   if (!token) {
     accountReady = true;
@@ -328,39 +329,44 @@ async function api(route, fields, { sessionToken, signal, retried = false } = {}
     const isAccount = route === '/v1/account';
     response = await fetch(new URL(route, API_ORIGIN), {
       method: isAccount ? 'GET' : 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(onProgress && { Accept: COUPON_STREAM_TYPE }) },
       body: isAccount ? undefined : JSON.stringify({ merchant, ...fields }),
-      signal: AbortSignal.any([AbortSignal.timeout(75_000), ...(signal ? [signal] : [])]),
+      signal: AbortSignal.any([AbortSignal.timeout(onProgress ? 120_000 : 75_000), ...(signal ? [signal] : [])]),
     });
   } catch {
     if (signal?.aborted) throw new Quiet('Replaced by a newer request.');
     throw Object.assign(new Error('Check your connection, then try again.'), { code: 'unreachable' });
   }
   let data = {};
+  let responseStatus = response.status;
   try {
-    const parsed = await response.json();
+    const streaming = onProgress && response.headers.get('content-type')?.startsWith(COUPON_STREAM_TYPE);
+    const result = streaming ? await readCouponStream(response.body, onProgress) : null;
+    if (result) responseStatus = result.status;
+    const parsed = result ? result.data : await response.json();
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) data = parsed;
   } catch {
     if (signal?.aborted) throw new Quiet('Replaced by a newer request.');
+    if (onProgress) throw Object.assign(new Error('The scan connection closed. Reopen CartScout to check for saved results.'), { code: 'scan_stream_closed' });
   }
   if (data.account && typeof data.account.userId === 'string') renderAccount(data.account);
-  if (response.status === 401) {
+  if (responseStatus === 401) {
     // A cached 60s Clerk JWT can expire right before the request lands: refresh once before showing signed-out.
     if (!retried) {
       const freshToken = await getClerkToken({ fresh: true }).catch(() => null);
       if (freshToken && freshToken !== token) {
-        return api(route, fields, { sessionToken: freshToken, signal, retried: true });
+        return api(route, fields, { sessionToken: freshToken, signal, retried: true, onProgress });
       }
     }
     accountReady = true;
     signedOut();
     throw new Quiet('Signed out.');
   }
-  if (!response.ok) {
+  if (responseStatus < 200 || responseStatus >= 300) {
     const msg = typeof data.message === 'string' && data.message
       ? data.message
       : (typeof data.error === 'string' && data.error ? data.error : 'CartScout couldn’t finish that. Try again in a moment.');
-    throw Object.assign(new Error(msg), { code: data.code, status: response.status, resetAt: data.resetAt });
+    throw Object.assign(new Error(msg), { code: data.code, status: responseStatus, resetAt: data.resetAt });
   }
   return data;
 }
@@ -595,8 +601,10 @@ function tailRows({ kind, retry, message }, data, shownCount) {
   }
   if (kind === 'scanning') {
     row.setAttribute('role', 'status');
+    const progress = line('Scout is digging for codes on the web…', 'lead');
+    progress.dataset.scanProgress = '';
     row.append(
-      line('Scout is digging for codes on the web…', 'lead'),
+      progress,
       line('Safe to close — codes will be here when you return.'),
     );
     return [row, ...createSkeletons(couponSkeleton, 2)];
@@ -655,7 +663,7 @@ function renderCoupons(data, { fresh = false, tail = { kind: 'end' }, at = Date.
 
   const order = [...worked, ...onPage, ...confirmed, ...rest];
   const count = order.length;
-  shown = answered ? data : null;
+  if (tail.kind !== 'scanning') shown = answered ? data : null;
   coupons = order;
   pageCount = onPage.length;
   confirmedCount = worked.length + (pro ? confirmed.length : 0);
@@ -682,7 +690,7 @@ function renderCoupons(data, { fresh = false, tail = { kind: 'end' }, at = Date.
   const groups = groupsFor(arranged, pro);
   const layout = JSON.stringify([
     account?.userId, pro, stale, tail.kind, isBudgetPaused(), account?.scans?.remaining, data.partial, !!data.coupons.length,
-    groups.map(([title, group]) => [title, group.map((coupon) => [coupon.code, !!coupon.pageOnly])]),
+    groups.map(([title, group]) => [title, group.map((coupon) => [coupon.code, !!coupon.pageOnly, !!coupon.pending])]),
   ]);
 
   if (layout === shownLayout && tickets.length === count) {
@@ -819,6 +827,10 @@ function showCouponError(error, retry) {
   }
 
   const permanent = error.status === 400 || error.status === 404;
+  if (shown?.coupons.length) {
+    renderCoupons(shown, { tail: { kind: 'error', retry: permanent ? undefined : retry } });
+    return;
+  }
   if (withPage) {
     renderCoupons(PAGE_ONLY, { tail: { kind: 'error', retry: permanent ? undefined : retry } });
     return;
@@ -885,8 +897,8 @@ function createScanConveyor() {
 }
 
 function showScanning() {
-  if (pageCodes.length) {
-    renderCoupons(PAGE_ONLY, { tail: { kind: 'scanning' } });
+  if (pageCodes.length || shown?.coupons.length) {
+    renderCoupons(shown ?? PAGE_ONLY, { tail: { kind: 'scanning' } });
   } else {
     emptyList();
     couponScene.show({
@@ -899,6 +911,22 @@ function showScanning() {
   }
   look('search');
   say('Digging for codes on the web…');
+}
+
+function scanProgress(mine, { checked, total, coupons: found }) {
+  if (loading !== mine) return;
+  const saved = shown?.coupons ?? [];
+  if (saved.length || found.length || pageCodes.length) {
+    renderCoupons({ ...(shown ?? PAGE_ONLY), source: 'progress', coupons: mergeProgressCoupons(saved, found) }, { tail: { kind: 'scanning' } });
+  }
+  if (total > 0) {
+    const text = `${checked} of ${total} ${total === 1 ? 'page' : 'pages'} checked`;
+    const label = list.querySelector('[data-scan-progress]');
+    if (label) label.textContent = text;
+    say(text);
+  } else {
+    say('Digging for codes on the web…');
+  }
 }
 
 const scanningKey = () => (account?.userId && merchant ? `scanning:${account.userId}:${merchant}` : null);
@@ -935,7 +963,9 @@ async function followInProgress(mine) {
     await wait(FOLLOW_EVERY_MS);
     if (loading !== mine) return;
     try {
-      const data = await api('/v1/coupons', { cacheOnly: true }, { signal: mine.controller.signal });
+      const data = await api('/v1/coupons', { cacheOnly: true }, {
+        signal: mine.controller.signal, onProgress: (update) => scanProgress(mine, update),
+      });
       if (loading !== mine) return;
       if (Array.isArray(data.coupons)) {
         renderCoupons(data, { fresh: true });
@@ -981,7 +1011,9 @@ async function loadCoupons({ cacheOnly = true, scan = false, force = false, quie
   }
   try {
     const [data] = await Promise.all([
-      api('/v1/coupons', { cacheOnly, ...(force && { force: true }) }, { signal: controller.signal }),
+      api('/v1/coupons', { cacheOnly, ...(force && { force: true }) }, {
+        signal: controller.signal, ...(scan && { onProgress: (update) => scanProgress(mine, update) }),
+      }),
       pageCodesReady,
     ]);
     if (loading !== mine) return;
@@ -994,7 +1026,7 @@ async function loadCoupons({ cacheOnly = true, scan = false, force = false, quie
     if (loading !== mine || error.quiet || !account) return;
     await pageCodesReady;
     if (loading !== mine) return;
-    if (error.code === 'scan_in_progress') {
+    if (error.code === 'scan_in_progress' || error.code === 'scan_stream_closed') {
       await followInProgress(mine);
       return;
     }
@@ -1043,7 +1075,7 @@ const dock = createDock(element('dock'), {
 });
 
 function currentDockPlan() {
-  const codes = Math.min(coupons.length, RUN_LIMIT);
+  const codes = Math.min(coupons.filter(coupon => !coupon.pending).length, RUN_LIMIT);
   return dockPlan({
     probe: page.probe,
     codes,
@@ -1053,9 +1085,9 @@ function currentDockPlan() {
 }
 
 function syncDock() {
-  const visible = !!account && view === 'coupons' && (!!run || leaving || coupons.length > 0);
-  const codes = Math.min(coupons.length, RUN_LIMIT);
   const plan = currentDockPlan();
+  const codes = Math.min(coupons.filter(coupon => !coupon.pending).length, RUN_LIMIT);
+  const visible = !!account && view === 'coupons' && (!!run || leaving || codes > 0);
   dock.render({
     visible,
     run,
@@ -1171,7 +1203,9 @@ function applyRun(next) {
 
 async function startRun({ pick = false } = {}) {
   if (leaving || !coupons.length || (run && RUN_ACTIVE.includes(run.status))) return;
-  const listed = coupons.map(({ reportCode, pageOnly, ...coupon }) => ({ ...coupon, code: reportCode ?? coupon.code }));
+  const listed = coupons.filter(coupon => !coupon.pending)
+    .map(({ reportCode, pageOnly, ...coupon }) => ({ ...coupon, code: reportCode ?? coupon.code }));
+  if (!listed.length) return;
   const response = await send({ type: 'cartscout:run-start', coupons: listed, merchant, pick });
   if (!response?.ok) {
     applyRun({

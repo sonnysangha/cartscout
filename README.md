@@ -102,8 +102,8 @@ flowchart TD
 
   CheckCache -->|"YES — Cache Hit (< 50ms)"| Fast["Return cached codes + community thumbs\n(0 Oxylabs requests spent)"]
 
-  CheckCache -->|"NO — Cache Miss / Expired / Rescan"| Reserve["Reserve atomic ticket in Convex UTC Ledger\n(max 6 requests, enforces daily & monthly cap)"]
-  Reserve --> RunOxy["Convex Action calls Oxylabs Web API\n• 1 × /v1/search (find official + coupon pages)\n• up to 5 × /v1/scrape in parallel (Markdown + AI JSON)"]
+  CheckCache -->|"NO — Cache Miss / Expired / Rescan"| Reserve["Reserve atomic ticket in Convex UTC Ledger\n(max 24 requests, enforces daily & monthly cap)"]
+  Reserve --> RunOxy["Convex Action calls Oxylabs Web API\n• 1 × /v1/search (up to 20 results)\n• up to 20 external pages plus merchant reads (Markdown + AI JSON)"]
   RunOxy --> Save["@convex-dev/action-cache stores result (24h TTL)\n+ releases unused ledger slots"]
   Save --> Fast
 ```
@@ -117,16 +117,18 @@ Every outbound call to Oxylabs is ticket-gated and logged:
 - **Hard ticket enforcement:** Every request must present an atomically reserved hold (`convex/ledger.ts`). If an operation tries to exceed its reserved ceiling, it throws locally before sending any HTTP request. Every call logs its kind (`search`, `read`, or `read_js`), target hostname, AI parser flag, HTTP success, and latency straight into the Convex UTC ledger.
 - **Raw response recording:** When `OXYLABS_RECORD=1` is enabled locally, `createRecorder` ([`server/recorder.js`](server/recorder.js)) saves raw Oxylabs payloads to disk for offline fixture replay.
 
-### 2. Multi-Stage Coupon Discovery Pipeline (`SCAN_CEILING = 6`)
+### 2. Multi-Stage Coupon Discovery Pipeline
 
-When a member scans a shop (`POST /v1/coupons`), the Convex Action runs a strictly bounded **3-stage Oxylabs pipeline** capped at **`6` requests max** per shop:
+When a member scans a shop (`POST /v1/coupons`), the Convex Action reserves up to 24 requests. A follow-up that skips previously checked merchant pages reserves up to 21.
+
+The shared coupon cache is keyed by merchant domain, so product pages on the same storefront reuse the same scan. Independently hosted shops on multi-tenant platforms keep separate cache entries. Each coupon retains its own offer terms and expiry. While a live scan runs, the extension keeps saved codes visible and adds verified source results as pages finish. Convex publishes scan progress separately, and the retailer cache receives the final result.
 
 1. **Stage 1 — Geo-Targeted Search (`POST /v1/search`, 1 request):**
-   - Queries Oxylabs Google Search with `"<merchant> coupon codes promo codes discount checkout"` (`max_results: 10`, geo-located via `OXYLABS_LOCATION`).
-   - Splits candidate URLs into **Official merchant pages** (`OWN_PAGES = 2`, homepage + known voucher pages like Myprotein’s `/c/voucher-codes/`) and **Open third-party coupon publishers** (`COUPON_SITES = 3`, 1 URL per host).
+   - Queries Oxylabs for up to 20 results, geo-located via `OXYLABS_LOCATION`.
+   - Selects up to two official merchant pages and one candidate URL per external host. Follow-up searches filter out hosts recorded in the current cache window.
    - **Smart publisher ranking (`siteRank`):** Ranks open-code sites that print full unmasked codes in plain HTML (`couponsolver`, `wethrift`, `simplycodes`, `couponbirds`, `coupert`, `dontpayfull`, `worthepenny`, `knoji`, `retailmenot`, `reddit`, `moneysavingexpert`) ahead of click-to-reveal affiliate walls (`wowcher`, `savoo`, `vouchercodes`, `couponfollow`, etc.).
 2. **Stage 2 — Parallel Scraping with Oxylabs AI Structured Extraction (`POST /v1/scrape`):**
-   - Scrapes official store pages in parallel via `Promise.allSettled()`, then scrapes top-ranked open coupon sites in parallel up to `SCAN_CEILING = 6`.
+   - Scrapes official store pages and then up to 20 ranked external coupon pages, with parallel reads within each group.
    - Requests `output: ['markdown', 'json']` with a strict `json.prompt` extracting `{ coupons: [{ code, offer, expiresOn }] }` only for the target `merchant`, ignoring masked `"Get Code / Show Code"` buttons and prompt-injection text.
    - **Double verification against raw Markdown (`hasPublicCode`, `namedBeside`):** CartScout never blindly trusts an LLM. Every AI-extracted code must appear literally in the raw Markdown next to an explicit label (`Use code:`, `Enter SAVE20 at checkout`, Markdown code cells, etc.), and expired dates are stripped with a global-friendly timezone cutoff.
 3. **Stage 3 — Conditional JavaScript Rendering Fallback (`run_js: true`):**

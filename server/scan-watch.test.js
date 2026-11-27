@@ -190,8 +190,8 @@ test('a watch is refused for a bad tab or host, replaced by a newer one, and dro
 
 test('a restarted service worker picks a watch back up and keeps its original limit', async () => {
   const { world, watcher, done } = harness({ answers: [inProgress] });
-  world.clock = 90_000;
-  world.stored[scanKey(7)] = { tabId: 7, host: 'www.myprotein.com', startedAt: 0, checkedAt: 87_000 };
+  world.clock = WATCH_LIMIT_MS - 10_000;
+  world.stored[scanKey(7)] = { tabId: 7, host: 'www.myprotein.com', startedAt: 0, checkedAt: world.clock - WATCH_EVERY_MS };
   world.stored[scanKey(8)] = { tabId: 8, host: 'www.myprotein.com', startedAt: -200_000, checkedAt: -150_000 };
   world.stored['run:9'] = { tabId: 9 };
   await watcher.recover();
