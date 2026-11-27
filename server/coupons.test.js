@@ -32,12 +32,12 @@ test('discovery scrapes independent sources and filters invalid or expired codes
   };
   const discover = createDiscovery({ key: 'fixture', location: 'GB', request });
   const result = await discover('nike.com');
-  // One search, the shop's own home page, and then, because it showed no code, each independent coupon site once.
-  assert.equal(calls.length, 4);
+  // Four searches, the shop's home page, and each independent coupon site once.
+  assert.equal(calls.length, 7);
   assert.match(calls[0].input.query, /nike\.com coupon/);
   assert.equal(calls[0].input.location, 'GB');
-  assert.match(calls[1].input.json.prompt, /nike\.com/);
-  assert.deepEqual(calls.slice(1).map(({ input }) => input.url), [
+  assert.match(calls[4].input.json.prompt, /nike\.com/);
+  assert.deepEqual(calls.slice(4).map(({ input }) => input.url), [
     'https://nike.com/', 'https://discounts.example.com/nike', 'https://savings.example.org/nike',
   ]);
   assert.deepEqual(result, { complete: true, coupons: [{

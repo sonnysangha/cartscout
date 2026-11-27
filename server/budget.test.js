@@ -11,7 +11,7 @@ const MONTHLY = 'Scout has done all of this month’s live searching. Saved code
 const DAILY_PRICES = 'Scout has done all of today’s live searching. Saved prices still open, and price checks are back tomorrow.';
 
 // An API on a small budget, with an Oxylabs where every shop has a voucher page showing one code and every product
-// is sold by four retailers. A scan uses three requests here; a price lookup uses five.
+// is sold by four retailers. A scan uses six requests here; a price lookup uses five.
 async function api(t, limits) {
   const clock = { now: Date.parse('2026-11-23T12:00:00Z') };
   const store = openStore(':memory:');
@@ -39,13 +39,13 @@ const shop = (name) => ({ merchant: `${name}.example.com` });
 const basket = (...names) => ({ merchant: 'shop.example.com', country: 'GB', items: names.map((name) => ({ name, variant: '' })) });
 
 test('a scan the day’s budget cannot cover is refused with budget_reached, and a Free member keeps their weekly scan', async (t) => {
-  const { call, clock, oxylabs } = await api(t, { daily: SCAN_CEILING + 2, monthly: 2000 });
+  const { call, clock, oxylabs } = await api(t, { daily: SCAN_CEILING + 5, monthly: 2000 });
   const first = await call('coupons', 'free-a', shop('one'));
   assert.equal(first.status, 200);
   assert.equal(first.body.account.scans.remaining, 4);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 
-  // Three requests are gone, leaving one fewer than a new scan reserves.
+  // Six requests are gone, leaving one fewer than a new scan reserves.
   const refused = await call('coupons', 'free-a', shop('two'));
   assert.equal(refused.status, 429);
   assert.deepEqual(Object.keys(refused.body).sort(), ['account', 'code', 'error', 'message', 'resetAt']);
@@ -54,7 +54,7 @@ test('a scan the day’s budget cannot cover is refused with budget_reached, and
   // The same envelope as slow_down: the sentence is under "error" too, where the popup already looks.
   assert.equal(refused.body.error, DAILY);
   assert.equal(refused.body.resetAt, '2026-11-24T00:00:00.000Z');
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
   assert.equal(refused.body.account.scans.remaining, 4);
   assert.equal((await call('account', 'free-a')).body.scans.remaining, 4);
 
@@ -71,7 +71,7 @@ test('a scan the day’s budget cannot cover is refused with budget_reached, and
 });
 
 test('when the month’s budget is used up the sentence names the day it comes back', async (t) => {
-  const { call, clock, oxylabs } = await api(t, { daily: 150, monthly: SCAN_CEILING + 2 });
+  const { call, clock, oxylabs } = await api(t, { daily: 150, monthly: SCAN_CEILING + 5 });
   assert.equal((await call('coupons', 'pro-c', shop('one'))).status, 200);
   clock.now += 24 * HOUR;
   const refused = await call('coupons', 'pro-c', shop('two'));
@@ -79,11 +79,11 @@ test('when the month’s budget is used up the sentence names the day it comes b
   assert.equal(refused.body.code, 'budget_reached');
   assert.equal(refused.body.message, MONTHLY);
   assert.equal(refused.body.resetAt, '2026-12-01T00:00:00.000Z');
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 });
 
 test('with the budget used up, a saved result is served with its age in place of a refusal', async (t) => {
-  const { call, clock, oxylabs } = await api(t, { daily: 150, monthly: SCAN_CEILING + 2 });
+  const { call, clock, oxylabs } = await api(t, { daily: 150, monthly: SCAN_CEILING + 5 });
   const read = clock.now;
   assert.equal((await call('coupons', 'pro-c', shop('one'))).body.source, 'live');
 
@@ -107,7 +107,7 @@ test('with the budget used up, a saved result is served with its age in place of
 
   // Nothing is saved for a shop nobody has scanned, so there the answer is the refusal.
   assert.equal((await call('coupons', 'free-a', shop('three'))).body.code, 'budget_reached');
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 });
 
 test('a price lookup the budget cannot cover is refused the same way, or answered from a saved lookup', async (t) => {
@@ -142,7 +142,7 @@ test('a price lookup the budget cannot cover is refused the same way, or answere
 });
 
 test('requests held by a scan that is still running count, so two scans cannot overrun the budget between them', async (t) => {
-  const { call, gate, oxylabs } = await api(t, { daily: SCAN_CEILING + 3, monthly: 2000 });
+  const { call, gate, oxylabs } = await api(t, { daily: SCAN_CEILING + 6, monthly: 2000 });
   let open;
   gate.wait = new Promise((resolve) => { open = resolve; });
   const running = call('coupons', 'pro-c', shop('one'));
@@ -156,8 +156,8 @@ test('requests held by a scan that is still running count, so two scans cannot o
   gate.wait = null;
   open();
   assert.equal((await running).status, 200);
-  // The first scan used three and handed back the unused hold, so the second now fits exactly.
+  // The first scan used six and handed back the unused hold, so the second now fits exactly.
   assert.equal((await call('coupons', 'pro-d', shop('two'))).status, 200);
-  assert.equal(oxylabs.sent.length, 6);
+  assert.equal(oxylabs.sent.length, 12);
   assert.equal((await call('coupons', 'pro-d', shop('three'))).body.code, 'budget_reached');
 });

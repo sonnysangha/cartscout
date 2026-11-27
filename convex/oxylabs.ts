@@ -1,3 +1,4 @@
+import { collectCouponSearch, couponPublisher, COUPON_SEARCH_LIMIT, COUPON_SEARCH_TIMEOUT, COUPON_SOURCE_TARGET } from "../shared/coupon-search.js";
 import { ActionCache } from "@convex-dev/action-cache";
 import type { FunctionReference } from "convex/server";
 import { v } from "convex/values";
@@ -20,10 +21,10 @@ import {
   offerItemValidator,
 } from "./schema";
 
-const SEARCH_MAX_RESULTS = 20;
-const MAX_SEARCH_EXCLUSIONS = 6;
+
 const OWN_PAGES = 2;
-const SCAN_CEILING = 1 + SEARCH_MAX_RESULTS + OWN_PAGES + 1;
+const RESCAN_CEILING = COUPON_SEARCH_LIMIT + COUPON_SOURCE_TARGET;
+const SCAN_CEILING = RESCAN_CEILING + OWN_PAGES + 1;
 const RETAILERS_PER_ITEM = 4;
 const LOOKUP_CEILING = 1 + RETAILERS_PER_ITEM;
 const PAGE_TRIES = 2;
@@ -633,7 +634,7 @@ async function runDiscoverShop(
     {
       holdId,
       operation: "scan",
-      requests: skipOwnPages ? 1 + SEARCH_MAX_RESULTS : SCAN_CEILING,
+      requests: skipOwnPages ? RESCAN_CEILING : SCAN_CEILING,
       now,
       daily,
       monthly,
@@ -648,29 +649,9 @@ async function runDiscoverShop(
   const needle = shopNeedle(merchant);
   const today = new Date(Date.now() - 12 * 3_600_000).toISOString().slice(0, 10);
   const excludeList = extractExternalHosts(merchant, domain, [], excludeHosts);
-  const excludeSet = new Set(excludeList);
-  const exclusions = excludeList
-    .slice(-MAX_SEARCH_EXCLUSIONS)
-    .map((host) => `-site:${host}`)
-    .join(" ");
-  const query = exclusions
-    ? `${merchant} voucher discount promo coupon codes ${exclusions}`
-    : `${merchant} coupon codes promo codes discount checkout`;
+  const excludeSet = new Set(excludeList.map(couponPublisher));
 
   try {
-    const results = await callOxylabs(
-      ctx,
-      holdId,
-      "scan",
-      "search",
-      {
-        query,
-        max_results: SEARCH_MAX_RESULTS,
-      },
-      location,
-      merchant,
-    );
-
     const home = `https://${merchant}/`;
     const own = skipOwnPages ? [] : [home];
     if (!skipOwnPages && (!location || location === "GB") && Object.hasOwn(MERCHANT_PAGES, merchant)) {
@@ -678,29 +659,38 @@ async function runDiscoverShop(
     }
 
     const others = new Map<string, { href: string; narrow: boolean }>();
-    for (const result of results) {
-      const url = sourceUrl(result.url);
-      const title = typeof result.title === "string" ? result.title : "";
-      if (
-        !url ||
-        !/coupon|voucher|promo|discount|deal|offer|saving/i.test(
-          `${title} ${url.href}`,
-        )
-      ) {
-        continue;
-      }
-      const host = normalizeMerchant(url.hostname);
-      if (!host) continue;
-      if (host === merchant || host.endsWith(`.${merchant}`)) {
-        if (!skipOwnPages && own.length < OWN_PAGES && !own.includes(url.href)) own.push(url.href);
-      } else if (!isExcludedHost(host, excludeSet)) {
-        const narrow = isNarrowDealPage(url, title);
-        const prev = others.get(host);
-        if (!prev || (prev.narrow && !narrow)) {
-          others.set(host, { href: url.href, narrow });
+    await collectCouponSearch({
+      merchant, excluded: excludeList, location, publishers: others,
+      search: (query) => callOxylabs(
+        ctx, holdId, "scan", "search", { query, max_results: COUPON_SOURCE_TARGET },
+        location, merchant, COUPON_SEARCH_TIMEOUT,
+      ),
+      collect(results) {
+        for (const result of results) {
+          const url = sourceUrl(result.url);
+          const title = typeof result.title === "string" ? result.title : "";
+          if (
+            !url ||
+            !/coupon|voucher|promo|discount|deal|offer|saving/i.test(
+              `${title} ${url.href}`,
+            )
+          ) {
+            continue;
+          }
+          const host = normalizeMerchant(url.hostname);
+          if (!host) continue;
+          if (isMerchantHost(host, merchant, domain)) {
+            if (!skipOwnPages && own.length < OWN_PAGES && !own.includes(url.href)) own.push(url.href);
+          } else if (!isExcludedHost(couponPublisher(host), excludeSet)) {
+            const narrow = isNarrowDealPage(url, title);
+            const prev = others.get(couponPublisher(host));
+            if (!prev || (prev.narrow && !narrow)) {
+              others.set(couponPublisher(host), { href: url.href, narrow });
+            }
+          }
         }
-      }
-    }
+      },
+    });
     const rankedOthers = [...others.entries()].sort(
       ([hostA, a], [hostB, b]) =>
         candidateRank(hostA, a.narrow) - candidateRank(hostB, b.narrow),
@@ -778,26 +768,30 @@ async function runDiscoverShop(
       return results.map((result, index) => {
         if (result.status === "rejected") {
           outcome.set(urls[index], false);
-          return [];
+          return { pages: [], found: [] };
         }
-        rows.push(...result.value.found);
-        return result.value.pages;
+        return result.value;
       });
     };
 
-    const external = rankedOthers.slice(0, SEARCH_MAX_RESULTS).map(([, entry]) => entry.href);
+    const external = rankedOthers.slice(0, COUPON_SOURCE_TARGET).map(([, entry]) => entry.href);
     if (progressToken) {
       await ctx.runMutation(internal.couponProgress.addPages, { token: progressToken, count: own.length + external.length }).catch(() => {});
     }
-    const first = await readPages(own, true);
-    const written = (pages: Array<Record<string, unknown>>) =>
-      pages.reduce((t, p) => t + String(p.markdown ?? "").length, 0);
-    const blank = own.filter((u, i) => outcome.get(u) && written(first[i]) < 20);
-    if (!rows.length && blank.length) {
-      await readPages([blank.find((u) => u !== home) ?? blank[0]], true, true);
-    }
-
-    await readPages(external, false);
+    const [official, couponSites] = await Promise.all([
+      (async () => {
+        const first = await readPages(own, true);
+        const written = (pages: Array<Record<string, unknown>>) =>
+          pages.reduce((total, page) => total + String(page.markdown ?? "").length, 0);
+        const blank = own.filter((url, index) => outcome.get(url) && written(first[index].pages) < 20);
+        if (!first.some(result => result.found.length) && blank.length) {
+          first.push(...await readPages([blank.find(url => url !== home) ?? blank[0]], true, true));
+        }
+        return first;
+      })(),
+      readPages(external, false),
+    ]);
+    for (const result of [...official, ...couponSites]) rows.push(...result.found);
 
     const attempted = [...outcome];
     if (!attempted.length && skipOwnPages) {

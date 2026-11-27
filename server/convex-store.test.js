@@ -158,14 +158,14 @@ test('openConvexStore powers scans, domain cache sharing, reports, wins, and asy
   const scan = await call('coupons', 'pro-c', { merchant: 'ridge.com' });
   assert.equal(scan.status, 200);
   assert.deepEqual(scan.body.coupons.map((c) => c.code), ['RIDGE10']);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 
   // Sibling subdomain uk.ridge.com immediately hydrates from Convex domain cache without calling Oxylabs.
   const uk = await call('coupons', 'pro-d', { merchant: 'uk.ridge.com', cacheOnly: true });
   assert.equal(uk.status, 200);
   assert.equal(uk.body.source, 'cache');
   assert.deepEqual(uk.body.coupons.map((c) => c.code), ['RIDGE10']);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 
   // Reporting a working code with savings feeds recentWins.
   const rep = await call('reports', 'pro-c', {
@@ -178,8 +178,8 @@ test('openConvexStore powers scans, domain cache sharing, reports, wins, and asy
   assert.equal(wins[0].code, 'RIDGE10');
   assert.equal(wins[0].savedAmount, 18.5);
 
-  // Ledger recorded the 3 requests and released the hold.
+  // Ledger recorded the six requests and released the hold.
   const totals = await store.ledger.totals(clock.now);
-  assert.equal(totals.day.requests, 3);
+  assert.equal(totals.day.requests, 6);
   assert.equal(totals.held, 0);
 });

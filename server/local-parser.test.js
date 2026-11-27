@@ -59,7 +59,7 @@ test('with local parsing a scan asks for the page alone and reads both shop and 
   // Search, shop pages, and coupon sites — and not one of them asks for AI parsing. "Gift card code" and
   // "Order code: 10530943" on the page are not promotions and were not taken for codes.
   assert.deepEqual(oxylabs.sent.map(({ endpoint, url, output, json, location }) => ({ endpoint, url, output, json, location })), [
-    { endpoint: 'search', url: undefined, output: undefined, json: undefined, location: 'GB' },
+    ...Array.from({ length: 4 }, () => ({ endpoint: 'search', url: undefined, output: undefined, json: undefined, location: 'GB' })),
     { endpoint: 'scrape', url: `https://${SHOP}/`, output: ['markdown'], json: undefined, location: 'GB' },
     { endpoint: 'scrape', url: VOUCHERS, output: ['markdown'], json: undefined, location: 'GB' },
     { endpoint: 'scrape', url: COUPON_SITE, output: ['markdown'], json: undefined, location: 'GB' },
@@ -81,7 +81,7 @@ test('with local parsing a coupon site’s codes only count where the page is pl
     ['SHIPFREE', 'Scout Fixture Shop: free delivery', [DEALS]],
     ['SALE5', 'Extra 5% off sale lines', [DEALS]],
   ]);
-  assert.equal(oxylabs.sent.length, 5);
+  assert.equal(oxylabs.sent.length, 8);
   assert.ok(oxylabs.sent.every(({ json }) => json === undefined));
 });
 

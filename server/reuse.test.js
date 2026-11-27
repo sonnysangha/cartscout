@@ -8,7 +8,7 @@ import { fakeOxylabs, HOUR, MINUTE, page, startApi } from './fixtures/kit.js';
 import { createDiscovery } from './oxylabs.js';
 import { openStore, reporterKey } from './store.js';
 
-// Every shop has a voucher page of its own that shows one code, so a live scan is three requests: the search, the
+// Every shop has a voucher page of its own that shows one code, so a live scan is six requests: four searches, the
 // home page and the voucher page. `broken` names shops whose voucher page cannot be read.
 async function api(t, { store, broken = new Set() } = {}) {
   const clock = { now: Date.parse('2026-11-23T12:00:00Z') };
@@ -34,7 +34,7 @@ test('a shop anyone scanned in the last 24 hours is answered from what the serve
   const read = clock.now;
   const first = (await call('coupons', 'free-a', { ...shop, productUrl: 'https://shop.example.com/products/jacket' })).body;
   assert.deepEqual([first.source, first.reused, first.fetchedAt, first.account.scans.remaining], ['live', undefined, when(read), 4]);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 
   // Twenty-three hours later another Free member scans the same shop. Nothing is sent to Oxylabs. It still counts as
   // one of their scans, and the answer says when the pages were really read.
@@ -47,7 +47,7 @@ test('a shop anyone scanned in the last 24 hours is answered from what the serve
   const proCached = (await call('coupons', 'pro-c', { ...shop, cacheOnly: true })).body;
   assert.deepEqual([proCached.source, proCached.reused, proCached.fetchedAt], ['cache', true, when(read)]);
   assert.deepEqual(proCached.coupons.map(({ code }) => code), ['SAVE10']);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 
   // What stays private is unchanged. A Free member's thumb is theirs alone; Pro members share theirs with each other.
   assert.equal((await call('reports', 'free-a', { ...shop, code: 'SAVE10', worked: true })).body.coupons[0].worked, 1);
@@ -59,30 +59,30 @@ test('a shop anyone scanned in the last 24 hours is answered from what the serve
   assert.deepEqual(await seenBy('free-a'), [1, 0]);
   assert.deepEqual(await seenBy('free-b'), [0, 0]);
   assert.deepEqual(await seenBy('pro-d'), [0, 1]);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 });
 
 test('regional and storefront subdomains share fresh scans on the same brand domain, while multi-tenant platforms stay isolated', async (t) => {
   const { call, oxylabs } = await api(t);
   const first = (await call('coupons', 'pro-c', { merchant: 'ridge.com' })).body;
   assert.deepEqual(first.coupons.map(({ code }) => code), ['SAVE10']);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 
   // Visiting uk.ridge.com immediately hydrates from ridge.com's cached scan without asking Oxylabs again.
   const uk = (await call('coupons', 'pro-d', { merchant: 'uk.ridge.com', cacheOnly: true })).body;
   assert.deepEqual([uk.source, uk.reused, uk.coupons.map(({ code }) => code)], ['cache', true, ['SAVE10']]);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 
   // Sibling store subdomains (uk.store.anker.com -> uk.anker.com) also share the cached brand scan.
   await call('coupons', 'pro-c', { merchant: 'uk.store.anker.com' });
-  assert.equal(oxylabs.sent.length, 6);
+  assert.equal(oxylabs.sent.length, 12);
   const anker = (await call('coupons', 'pro-d', { merchant: 'uk.anker.com', cacheOnly: true })).body;
   assert.deepEqual([anker.source, anker.reused, anker.coupons.map(({ code }) => code)], ['cache', true, ['SAVE10']]);
-  assert.equal(oxylabs.sent.length, 6);
+  assert.equal(oxylabs.sent.length, 12);
 
   // Multi-tenant storefront hosts like *.myshopify.com must never leak codes across unrelated shops.
   await call('coupons', 'pro-c', { merchant: 'alpha.myshopify.com' });
-  assert.equal(oxylabs.sent.length, 9);
+  assert.equal(oxylabs.sent.length, 18);
   const otherTenant = await call('coupons', 'pro-d', { merchant: 'beta.myshopify.com', cacheOnly: true });
   assert.equal(otherTenant.status, 409);
   assert.equal(otherTenant.body.code, 'scan_required');
@@ -102,23 +102,23 @@ test('a reused answer is fresh until the pages are 24 hours old, and then the sh
   clock.now = read + 24 * HOUR + MINUTE;
   const aged = (await call('coupons', 'free-a', { ...shop, cacheOnly: true })).body;
   assert.deepEqual([aged.source, aged.fetchedAt, aged.reused], ['stale', when(read), true]);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 
   const again = (await call('coupons', 'free-a', shop)).body;
   assert.deepEqual([again.source, again.reused, again.fetchedAt, again.account.scans.remaining], ['live', undefined, when(clock.now), 3]);
-  assert.equal(oxylabs.sent.length, 6);
+  assert.equal(oxylabs.sent.length, 12);
 });
 
 test('a scan that could not read every source is not passed on to other members', async (t) => {
   const { call, clock, oxylabs } = await api(t, { broken: new Set(['shop.example.com']) });
   const partial = (await call('coupons', 'pro-c', shop)).body;
   assert.deepEqual([partial.source, partial.partial, partial.coupons.length], ['live', true, 0]);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 
   clock.now += 5 * MINUTE;
   const other = (await call('coupons', 'free-a', shop)).body;
   assert.deepEqual([other.source, other.partial, other.reused], ['live', true, undefined]);
-  assert.equal(oxylabs.sent.length, 6);
+  assert.equal(oxylabs.sent.length, 12);
   // It found nothing because a source could not be read, so it is not charged either.
   assert.equal(other.account.scans.remaining, 5);
 });
@@ -139,7 +139,7 @@ test('two members scanning the same shop at the same moment share one read', asy
     assert.deepEqual([answer.body.source, answer.body.reused, answer.body.account.scans.remaining], ['live', undefined, 4]);
     assert.deepEqual(answer.body.coupons.map(({ code }) => code), ['SAVE10']);
   }
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 });
 
 test('a database from before this change is brought forward, so shops scanned earlier are not paid for again', async (t) => {
@@ -188,12 +188,13 @@ test('a database from before this change is brought forward, so shops scanned ea
 
 test('rescanning within the cache window excludes recently hit websites, expands to new sites, and merges codes', async (t) => {
   const clock = { now: Date.parse('2026-11-27T12:00:00Z') };
+  let rescan = false;
   const queries = [];
   const scraped = [];
   const oxylabs = fakeOxylabs(async ({ endpoint, query, url }) => {
     if (endpoint === 'search') {
       queries.push(query);
-      if (query.includes('-site:hotukdeals.com')) {
+      if (rescan) {
         return [
           // Even if Google somehow returned a subdomain of an excluded host, it must be skipped.
           { title: 'John Lewis Voucher Codes', url: 'https://m.hotukdeals.com/vouchers/johnlewis.com' },
@@ -238,16 +239,17 @@ test('rescanning within the cache window excludes recently hit websites, expands
   // 1. Initial scan hits johnlewis.com + hotukdeals.com (only Charlotte Tilbury code found).
   const first = (await call('coupons', 'pro-c', { merchant: 'johnlewis.com' })).body;
   assert.deepEqual(first.coupons.map((c) => c.code), ['TILBURYDEC80']);
-  assert.equal(queries.length, 1);
+  assert.equal(queries.length, 4);
   assert.ok(!queries[0].includes('-site:'));
 
   // 2. Two hours later (still in the 24h cache window), user clicks "Search for more codes" (force: true).
   clock.now += 2 * HOUR;
   scraped.length = 0;
+  rescan = true;
   const expanded = (await call('coupons', 'pro-c', { merchant: 'johnlewis.com', force: true })).body;
-  assert.equal(queries.length, 2);
-  assert.ok(queries[1].includes('-site:hotukdeals.com'), `expected -site:hotukdeals.com in query: ${queries[1]}`);
-  // Skipped johnlewis.com home page and hotukdeals.com, using all 5 remaining slots on 5 brand-new websites!
+  assert.equal(queries.length, 8);
+  assert.ok(queries[4].includes('-site:hotukdeals.com'), `expected -site:hotukdeals.com in query: ${queries[4]}`);
+  // Skipped johnlewis.com home page and hotukdeals.com, checking the five eligible new publishers returned by Oxylabs.
   assert.deepEqual(scraped, [
     'https://www.wethrift.com/john-lewis',
     'https://simplycodes.com/store/johnlewis.com',

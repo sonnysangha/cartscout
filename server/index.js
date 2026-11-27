@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { cachedAlternatives } from './cached-alternatives.js';
 import {
-  createDiscovery, extractExternalHosts, mergeCoupons, normalizeCode, normalizeMerchant, registrableDomain, SCAN_CEILING, SEARCH_MAX_RESULTS,
+  createDiscovery, extractExternalHosts, mergeCoupons, normalizeCode, normalizeMerchant, registrableDomain, RESCAN_CEILING, SCAN_CEILING,
 } from './oxylabs.js';
 import { createAlternativeDiscovery, LOOKUP_CEILING, parseBasket, retryCost } from './alternatives.js';
 import { lastDayStillRunning, LOOKUP_LIFETIME, openStore, reporterKey, SCAN_LIFETIME } from './store.js';
@@ -174,7 +174,7 @@ export function createCouponServer({
     }
     const excludeHosts = expand?.excludeHosts ?? [];
     const skipOwnPages = Boolean(expand?.skipOwnPages && excludeHosts.length > 0);
-    const { ticket, refused } = await budget.reserve('scan', skipOwnPages ? 1 + SEARCH_MAX_RESULTS : SCAN_CEILING, time);
+    const { ticket, refused } = await budget.reserve('scan', skipOwnPages ? RESCAN_CEILING : SCAN_CEILING, time);
     if (refused) return { refused: budgetReached('scan', refused) };
 
     const previousCoupons = expand?.previousCoupons ?? [];

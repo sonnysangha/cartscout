@@ -102,8 +102,8 @@ flowchart TD
 
   CheckCache -->|"YES — Cache Hit (< 50ms)"| Fast["Return cached codes + community thumbs\n(0 Oxylabs requests spent)"]
 
-  CheckCache -->|"NO — Cache Miss / Expired / Rescan"| Reserve["Reserve atomic ticket in Convex UTC Ledger\n(max 24 requests, enforces daily & monthly cap)"]
-  Reserve --> RunOxy["Convex Action calls Oxylabs Web API\n• 1 × /v1/search (up to 20 results)\n• up to 20 external pages plus merchant reads (Markdown + AI JSON)"]
+  CheckCache -->|"NO — Cache Miss / Expired / Rescan"| Reserve["Reserve atomic ticket in Convex UTC Ledger\n(max 27 requests, enforces daily & monthly cap)"]
+  Reserve --> RunOxy["Convex Action calls Oxylabs Web API\n• up to 4 × /v1/search (20 results each)\n• up to 20 external pages plus merchant reads (Markdown + AI JSON)"]
   RunOxy --> Save["@convex-dev/action-cache stores result (24h TTL)\n+ releases unused ledger slots"]
   Save --> Fast
 ```
@@ -119,12 +119,12 @@ Every outbound call to Oxylabs is ticket-gated and logged:
 
 ### 2. Multi-Stage Coupon Discovery Pipeline
 
-When a member scans a shop (`POST /v1/coupons`), the Convex Action reserves up to 24 requests. A follow-up that skips previously checked merchant pages reserves up to 21.
+When a member scans a shop (`POST /v1/coupons`), the Convex Action reserves up to 27 requests. A follow-up that skips previously checked merchant pages reserves up to 24.
 
 The shared coupon cache is keyed by merchant domain, so product pages on the same storefront reuse the same scan. Independently hosted shops on multi-tenant platforms keep separate cache entries. Each coupon retains its own offer terms and expiry. While a live scan runs, the extension keeps saved codes visible and adds verified source results as pages finish. Convex publishes scan progress separately, and the retailer cache receives the final result.
 
-1. **Stage 1 — Geo-Targeted Search (`POST /v1/search`, 1 request):**
-   - Queries Oxylabs for up to 20 results, geo-located via `OXYLABS_LOCATION`.
+1. **Stage 1 — Geo-Targeted Search (`POST /v1/search`, up to 4 requests):**
+   - Queries Oxylabs for up to 20 results at a time, geo-located via `OXYLABS_LOCATION`. If the first query yields fewer than 20 eligible publishers, three different queries run in parallel to fill the remaining slots.
    - Selects up to two official merchant pages and one candidate URL per external host. Follow-up searches filter out hosts recorded in the current cache window.
    - **Smart publisher ranking (`siteRank`):** Ranks open-code sites that print full unmasked codes in plain HTML (`couponsolver`, `wethrift`, `simplycodes`, `couponbirds`, `coupert`, `dontpayfull`, `worthepenny`, `knoji`, `retailmenot`, `reddit`, `moneysavingexpert`) ahead of click-to-reveal affiliate walls (`wowcher`, `savoo`, `vouchercodes`, `couponfollow`, etc.).
 2. **Stage 2 — Parallel Scraping with Oxylabs AI Structured Extraction (`POST /v1/scrape`):**

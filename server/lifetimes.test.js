@@ -43,7 +43,7 @@ test('a complete scan stays fresh for 24 hours, whether it found a code or not',
     const first = (await call('coupons', 'pro-c', { merchant })).body;
     assert.deepEqual([first.source, first.partial, first.freshUntil], ['live', false, when(read + 24 * HOUR)]);
   }
-  assert.equal(oxylabs.sent.length, 6);
+  assert.equal(oxylabs.sent.length, 12);
 
   // A Pro popup asks for a fresh list every time it opens. For a whole day the saved one is the answer, also for the
   // shop with no codes, which used to be scanned again after two hours.
@@ -51,11 +51,11 @@ test('a complete scan stays fresh for 24 hours, whether it found a code or not',
   for (const merchant of ['codes.example.com', 'nocodes.example.com']) {
     assert.equal((await call('coupons', 'pro-c', { merchant })).body.source, 'cache');
   }
-  assert.equal(oxylabs.sent.length, 6);
+  assert.equal(oxylabs.sent.length, 12);
 
   clock.now = read + 24 * HOUR + MINUTE;
   assert.equal((await call('coupons', 'pro-c', { merchant: 'nocodes.example.com' })).body.source, 'live');
-  assert.equal(oxylabs.sent.length, 9);
+  assert.equal(oxylabs.sent.length, 18);
 });
 
 test('a partial scan stays fresh for 60 minutes', async (t) => {
@@ -63,16 +63,16 @@ test('a partial scan stays fresh for 60 minutes', async (t) => {
   const read = clock.now;
   const first = (await call('coupons', 'pro-c', { merchant: 'patchy.example.com' })).body;
   assert.deepEqual([first.source, first.partial, first.freshUntil], ['live', true, when(read + 60 * MINUTE)]);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 
   // It used to be scanned again after ten minutes.
   clock.now = read + 59 * MINUTE;
   assert.deepEqual((({ source, partial }) => [source, partial])((await call('coupons', 'pro-c', { merchant: 'patchy.example.com' })).body), ['cache', true]);
-  assert.equal(oxylabs.sent.length, 3);
+  assert.equal(oxylabs.sent.length, 6);
 
   clock.now = read + 61 * MINUTE;
   assert.equal((await call('coupons', 'pro-c', { merchant: 'patchy.example.com' })).body.source, 'live');
-  assert.equal(oxylabs.sent.length, 6);
+  assert.equal(oxylabs.sent.length, 12);
 });
 
 test('a failed scan leaves a ten-minute mark, and the next tries are answered from the mark, not by Oxylabs', async (t) => {
@@ -108,7 +108,7 @@ test('a failed scan leaves a ten-minute mark, and the next tries are answered fr
   const retried = await call('coupons', 'pro-c', { merchant: 'down.example.com' });
   assert.equal(retried.status, 200);
   assert.equal(retried.body.source, 'live');
-  assert.equal(oxylabs.sent.length, sent + 3);
+  assert.equal(oxylabs.sent.length, sent + 6);
 });
 
 test('after a failed scan, a saved list is shown in place of the error', async (t) => {
@@ -124,6 +124,6 @@ test('after a failed scan, a saved list is shown in place of the error', async (
     assert.equal(answer.status, 200);
     assert.deepEqual([answer.body.source, answer.body.fetchedAt, answer.body.coupons[0].code], ['stale', when(read), 'SAVE10']);
   }
-  // Three for the first scan, one for the failed search, none for the try answered from the mark.
-  assert.equal(oxylabs.sent.length, 4);
+  // Six for the first scan, one for the failed search, none for the try answered from the mark.
+  assert.equal(oxylabs.sent.length, 7);
 });
