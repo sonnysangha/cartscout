@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { createDiscovery, normalizeCode, normalizeMerchant, registrableDomain, SCAN_CEILING } from './oxylabs.js';
+import { cachedAlternatives } from './cached-alternatives.js';
 import { createAlternativeDiscovery, LOOKUP_CEILING, parseBasket, retryCost } from './alternatives.js';
 import { LOOKUP_LIFETIME, openStore, reporterKey, SCAN_LIFETIME } from './store.js';
 import { openConvexStore } from './convex-store.js';
@@ -408,7 +409,7 @@ export function createCouponServer({
       if (request.url === '/health' && request.method === 'GET') return send(200, { ok: true });
       const wantsAccount = request.method === 'GET' && request.url === '/v1/account';
       const wantsWins = request.method === 'GET' && request.url === '/v1/wins';
-      if (!wantsAccount && !wantsWins && (request.method !== 'POST' || !['/v1/coupons', '/v1/reports', '/v1/alternatives'].includes(request.url))) {
+      if (!wantsAccount && !wantsWins && (request.method !== 'POST' || !['/v1/coupons', '/v1/reports', '/v1/alternatives', '/v1/alternatives/cached'].includes(request.url))) {
         throw new HttpError(404, 'Route not found.');
       }
 
@@ -431,9 +432,10 @@ export function createCouponServer({
       const merchant = normalizeMerchant(body.merchant);
       if (!merchant) throw new HttpError(400, 'Scout can only look up public shop websites.');
       const cacheKey = identity?.plan === 'free' ? `private:${reporter}:${merchant}` : merchant;
-      if (request.url === '/v1/alternatives') {
+      if (request.url === '/v1/alternatives' || request.url === '/v1/alternatives/cached') {
         const basket = parseBasket(body);
         if (!basket) throw new HttpError(400, 'Choose a supported country and provide basket products.');
+        if (request.url.endsWith('/cached')) return send(200, await cachedAlternatives(store, merchant, basket, now()));
         return send(200, await alternatives(merchant, reporter, basket.country, basket.items));
       }
       if (request.url === '/v1/coupons') {

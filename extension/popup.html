@@ -46,6 +46,10 @@
 
   <div class="stage-body">
     <main id="main">
+      <button type="button" id="cached-saving" class="cached-saving" hidden>
+        <strong></strong>
+        <span></span>
+      </button>
       <section id="coupon-view" class="view" role="tabpanel" aria-labelledby="show-coupons">
         <ol id="coupons" class="ticket-list" aria-label="Coupon codes"></ol>
         <div id="coupon-scene" class="scene" hidden>
@@ -94,6 +98,10 @@
         <div id="more-row" class="more-row" hidden>
           <button type="button" id="more-alternatives" class="secondary more-button">Check more basket products</button>
           <p id="more-status" class="more-status" role="status"></p>
+        </div>
+        <div id="price-alerts" class="price-alert-settings" hidden>
+          <button type="button" id="toggle-price-alerts" class="quiet" aria-describedby="price-alert-status">Enable price alerts on this shop</button>
+          <p id="price-alert-status" class="compare-message" role="status">Show a notice when Scout has a cached lower price.</p>
         </div>
       </section>
     </main>

@@ -1232,6 +1232,7 @@ async function openBasket() {
   if (arrived) {
     const tab = await chrome.tabs.get(page.tabId).catch(() => null);
     if (tab?.url) {
+      page.url = tab.url;
       page.myproteinBasket = isMyproteinBasket(tab.url);
       page.basket = page.myproteinBasket || isBasketUrl(tab.url);
       compare?.moved();
@@ -1569,6 +1570,7 @@ async function start() {
       tabId: tab.id ?? null,
       host: url.hostname,
       origin: url.origin,
+      url: tab.url,
       shop: true,
       merchant,
       myproteinBasket: mpBasket,
@@ -1588,6 +1590,8 @@ async function start() {
     look,
     skeleton: element('offer-skeleton'),
     signedIn: () => !!account,
+    savingButton: element('cached-saving'),
+    openAlternatives: () => switchView('alternatives'),
   });
   if (initialView === 'alternatives') switchView('alternatives');
 

@@ -12,6 +12,7 @@ import { mountScout, setMood } from './scout.js';
 import { prefersReducedMotion } from './confetti.js';
 import { dealIn, drawSwipe, stickOn } from './motion.js';
 import { createSkeletons } from './popup-ticket.js';
+import { alertPermission, canEnablePriceAlerts, priceAlertSite } from './price-alerts.js';
 
 const SHORT = { GB: 'UK', AE: 'UAE' };
 const MIN_QUERY = 3;
@@ -20,7 +21,7 @@ const CHOICE = 'compareCountry';
 const clean = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
 const plural = (count, one, many) => (count === 1 ? `1 ${one}` : `${count} ${many}`);
 
-export function createCompare({ root, page, send, session, look, skeleton, signedIn }) {
+export function createCompare({ root, page, send, session, look, skeleton, signedIn, savingButton, openAlternatives }) {
   const find = (selector) => root.querySelector(selector);
   const form = find('#compare-form');
   const query = find('#compare-query');
@@ -38,6 +39,9 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
   const moreRow = find('#more-row');
   const more = find('#more-alternatives');
   const moreStatus = find('#more-status');
+  const alertSettings = find('#price-alerts');
+  const alertToggle = find('#toggle-price-alerts');
+  const alertStatus = find('#price-alert-status');
   const view = form.closest('.view') ?? root;
   // With results on screen each product carries the shopper's own price, so the page line steps aside (popup.css).
   const showResults = (on) => {
@@ -55,6 +59,10 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
   let ready = false;
   let chosen = false;
   let action;
+  let cachedSaving = null;
+  let savingTimer;
+  let preparation = 0;
+  let edited = false;
 
   function setMarket(code) {
     if (!Object.hasOwn(markets, code) || market.value === code) return;
@@ -181,6 +189,55 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
     delete moreStatus.dataset.tone;
     if (remote && page.tabId) void send({ type: 'cartscout:compare-clear' });
   }
+
+  function clearSaving() {
+    clearTimeout(savingTimer);
+    cachedSaving = null;
+    savingButton.hidden = true;
+    if (state?.cached) applyState(null);
+  }
+
+  function showCachedComparison() {
+    if (!cachedSaving || busy) return;
+    const { country, result } = cachedSaving;
+    query.value = result.name;
+    applyState({
+      cached: true, merchant: page.merchant, country, status: 'done', seen: true,
+      checked: 1, found: [result], startedAt: result.fetchedAt,
+    });
+  }
+
+  savingButton.addEventListener('click', () => {
+    showCachedComparison();
+    openAlternatives();
+  });
+
+  const site = shop && priceAlertSite(page.origin);
+  const alertsAvailable = canEnablePriceAlerts(site, chrome.runtime.getManifest().host_permissions);
+  let alertsEnabled = false;
+  async function readAlertSetting() {
+    alertsEnabled = await chrome.permissions.contains(alertPermission(site.origin));
+    alertToggle.textContent = alertsEnabled ? 'Disable price alerts on this shop' : 'Enable price alerts on this shop';
+    alertSettings.hidden = !signedIn();
+  }
+
+  alertToggle.addEventListener('click', async () => {
+    if (!alertsAvailable) return;
+    alertToggle.disabled = true;
+    try {
+      const permission = alertPermission(site.origin);
+      if (alertsEnabled) await chrome.permissions.remove(permission);
+      else await chrome.permissions.request(permission);
+      await readAlertSetting();
+      alertStatus.textContent = alertsEnabled
+        ? 'Price alerts are on for this shop.'
+        : 'Show a notice when Scout has a cached lower price.';
+    } catch {
+      alertStatus.textContent = 'Couldn’t change price alerts. Try again.';
+    } finally {
+      alertToggle.disabled = false;
+    }
+  });
 
   function ownPrice(name) {
     return product && product.name.toLowerCase() === name.toLowerCase() ? product : null;
@@ -360,7 +417,8 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
   }
 
   function applyState(next) {
-    if (!next || (page.merchant && next.merchant !== page.merchant)) {
+    if (!next || (page.merchant && next.merchant !== page.merchant)
+      || (next.url && page.url && next.url !== page.url)) {
       if (state) {
         clearResults();
         setBusy(false);
@@ -459,7 +517,8 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
       setVerdict(currencyVerdict(decorated) ?? basketVerdict(decorated, next.checked, next.items.length));
     } else if (decorated[0]) {
       moreRow.hidden = true;
-      tell(decorated[0].partial && decorated[0].offers.length ? 'Some retailers didn’t answer. Compare again to retry.' : '');
+      tell(next.cached ? 'From a recent comparison · before delivery'
+        : decorated[0].partial && decorated[0].offers.length ? 'Some retailers didn’t answer. Compare again to retry.' : '');
       setVerdict(currencyVerdict(decorated) ?? verdictFor(decorated[0], decorated[0].own));
     }
   }
@@ -598,14 +657,17 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
   });
   more.addEventListener('click', () => { if (state) void run(false); });
   query.addEventListener('input', () => {
+    edited = true;
     if (!query.hasAttribute('aria-invalid')) return;
     query.removeAttribute('aria-invalid');
     tell(`Before delivery · ${marketName()}`);
   });
   market.addEventListener('change', () => {
+    edited = true;
     marketFace.textContent = SHORT[market.value] ?? market.value;
     chosen = true;
     void chrome.storage.local.set({ [CHOICE]: market.value }).catch(() => {});
+    if (state?.cached) applyState(null);
     if (!busy && !state) tell(shop ? `Before delivery · ${marketName()}` : '');
   });
 
@@ -620,6 +682,7 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
     async prepare() {
       if (ready) return;
       ready = true;
+      const check = ++preparation;
       const stored = await chrome.storage.local.get(CHOICE).catch(() => ({}));
       if (Object.hasOwn(markets, stored?.[CHOICE]) && !busy && !state) {
         chosen = true;
@@ -640,12 +703,29 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
           }
         }
       }
+      if (preparation !== check) return;
       showPage();
       if (!state && !busy) intro();
+      if (!site || !signedIn()) return;
+      if (alertsAvailable) void readAlertSetting().catch(() => {});
+      if (!product) return;
+      const reply = await send({ type: 'cartscout:compare-cached', merchant: page.merchant, product });
+      const saving = reply?.saving;
+      if (preparation !== check || !signedIn() || !saving) return;
+      const remaining = Date.parse(saving.result.freshUntil) - Date.now();
+      if (!(remaining > 0)) return;
+      cachedSaving = saving;
+      savingButton.querySelector('strong').textContent = saving.title;
+      savingButton.querySelector('span').textContent = saving.detail;
+      savingButton.hidden = false;
+      savingTimer = setTimeout(clearSaving, remaining);
+      if (!state && !busy && !edited && clean(query.value) === product.name) showCachedComparison();
     },
     moved() {
+      clearSaving();
       if (product && clean(query.value).toLowerCase() === product.name.toLowerCase()) query.value = '';
       product = undefined;
+      edited = false;
       basketItems = [];
       clearResults({ remote: true });
       ready = false;
@@ -653,8 +733,12 @@ export function createCompare({ root, page, send, session, look, skeleton, signe
       void this.prepare();
     },
     reset() {
+      preparation++;
+      clearSaving();
+      alertSettings.hidden = true;
       clearResults({ remote: true });
       basketItems = [];
+      edited = false;
       ready = false;
       intro();
     },

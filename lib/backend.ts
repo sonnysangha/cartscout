@@ -3,6 +3,7 @@ import { createClerkAuthenticator } from "@/server/auth.js";
 import { budgetMessage } from "@/server/budget.js";
 import { openConvexStore } from "@/server/convex-store.js";
 import { parseBasket, retryCost } from "@/server/alternatives.js";
+import { cachedAlternatives } from "@/server/cached-alternatives.js";
 import {
   normalizeCode,
   normalizeMerchant,
@@ -300,6 +301,7 @@ export async function handleCouponsLookup(
 
 export async function handleAlternativesLookup(
   body: Record<string, unknown>,
+  cacheOnly = false,
 ) {
   const merchant = normalizeMerchant(body.merchant);
   if (!merchant) {
@@ -310,6 +312,7 @@ export async function handleAlternativesLookup(
     throw new ApiHttpError(400, "Choose a supported country and provide basket products.");
   }
   const store = getConvexStore();
+  if (cacheOnly) return cachedAlternatives(store, merchant, basket);
   const settled = await Promise.allSettled(
     basket.items.map(async (item: { name: string; variant: string }) => {
       const time = Date.now();

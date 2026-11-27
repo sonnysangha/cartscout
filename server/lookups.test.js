@@ -88,6 +88,28 @@ test('a complete lookup answers for six hours', async (t) => {
   assert.equal(oxylabs.sent.length, 10);
 });
 
+test('automatic comparisons share fresh offers across members and never spend on a miss or expiry', async (t) => {
+  const { call, clock, oxylabs, failing } = await api(t);
+  const read = clock.now;
+  const peek = (body = ask()) => call('alternatives/cached', 'free-b', body);
+
+  assert.deepEqual((await peek()).body, { country: 'GB', results: [] });
+  assert.equal(oxylabs.sent.length, 0);
+
+  failing.add(RETAILERS[3]);
+  await call('alternatives', 'pro-c', ask());
+  const [cached] = (await peek()).body.results;
+  assert.equal(cached.offers.length, 3);
+  assert.equal(cached.fetchedAt, when(read));
+  assert.equal(cached.freshUntil, when(read + 30 * MINUTE));
+  assert.deepEqual((await peek(ask({ ...widget, variant: 'Red, 1kg' }))).body.results, []);
+  assert.deepEqual((await peek(ask(widget, 'shop.example.com', 'US'))).body.results, []);
+
+  clock.now = read + 30 * MINUTE;
+  assert.deepEqual((await peek()).body.results, []);
+  assert.equal(oxylabs.sent.length, 5);
+});
+
 test('a partial lookup answers for 30 minutes, and a retry only asks for the retailer pages that failed', async (t) => {
   // Seven requests a day: the lookup's five, and exactly the two a retry needs. A whole second lookup would not fit.
   const { call, clock, oxylabs, failing } = await api(t, { daily: 7 });

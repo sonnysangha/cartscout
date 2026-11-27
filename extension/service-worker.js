@@ -1,9 +1,11 @@
 import { createClerkClient } from '@clerk/chrome-extension/client';
 import { API_ORIGIN, CLERK_PUBLISHABLE_KEY, CLERK_SYNC_ORIGIN } from './config.js';
-import { createReporter, createRunEngine, panelMessages as runMessages, senderRole } from './run.js';
+import { createReporter, createRunEngine, panelMessages as runMessages, PANEL_FILE, senderRole } from './run.js';
 import { createScanWatcher } from './scan-watch.js';
 import { createCompareEngine } from './compare-worker.js';
 import { HANDOVER_KEY, popupHandover } from './handover.js';
+import { readPageProduct } from './product.js';
+import { alertPermission, canEnablePriceAlerts, findCachedSaving, priceAlertSite } from './price-alerts.js';
 
 let clerkClient;
 let clientLoading;
@@ -117,6 +119,46 @@ const compare = createCompareEngine({
   popupOpen, runShowing: (tabId) => engine.showing(tabId),
 });
 
+const alertChecks = new Map();
+
+async function checkPriceAlert(tab) {
+  const site = priceAlertSite(tab?.url);
+  if (!canEnablePriceAlerts(site, chrome.runtime.getManifest().host_permissions)
+    || !tab.active || tab.status !== 'complete' || engine.showing(tab.id)
+    || compare.get(tab.id)?.status === 'running') return;
+  const previous = alertChecks.get(tab.id);
+  if (previous?.url === tab.url && Date.now() - previous.at < 60_000) return;
+  const check = { url: tab.url, at: Date.now() };
+  alertChecks.set(tab.id, check);
+  const enabled = () => chrome.permissions.contains(alertPermission(site.origin));
+  if (!(await enabled()) || await popupOpen()) return;
+
+  const [page] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readPageProduct });
+  if (!page?.documentId || !page.result) return;
+  const merchant = site.hostname.replace(/^www\./, '');
+  const saving = await findCachedSaving(compare.cached, merchant, page.result);
+  if (!saving || alertChecks.get(tab.id) !== check) return;
+  const current = await chrome.tabs.get(tab.id);
+  if (!current.active || current.url !== tab.url || engine.showing(tab.id)
+    || compare.get(tab.id)?.status === 'running' || !(await enabled()) || await popupOpen()) return;
+
+  const [latest] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id, documentIds: [page.documentId] }, func: readPageProduct,
+  });
+  const product = latest?.result;
+  if (!product || ['name', 'variant', 'price', 'currency', 'from'].some((field) => product[field] !== page.result[field])
+    || Date.parse(saving.result.freshUntil) <= Date.now()) return;
+
+  await chrome.scripting.executeScript({ target: { tabId: tab.id, documentIds: [page.documentId] }, files: [PANEL_FILE] });
+  await chrome.tabs.sendMessage(tab.id, {
+    type: 'cartscout:notice',
+    notice: {
+      kind: 'price-alert', host: merchant, count: 1, title: saving.title, detail: saving.detail,
+      key: JSON.stringify([page.result.name, page.result.variant, saving.country]),
+    },
+  }, { documentId: page.documentId });
+}
+
 // Runs, scan watches and retailer comparisons live in storage.session, so a restarted worker picks them back up.
 const recovered = Promise.all([engine.recover(), watcher.recover(), compare.recover()]);
 
@@ -151,7 +193,13 @@ const popupMessages = {
   'cartscout:run-clear': ({ tabId }) => engine.clear(tabId),
   'cartscout:scan-watch': ({ tabId, host }) => watcher.watch({ tabId, host }),
   'cartscout:scan-seen': ({ tabId }) => watcher.seen(tabId),
-  'cartscout:compare-start': (message) => compare.start(message),
+  'cartscout:compare-start': async (message) => {
+    const tab = await chrome.tabs.get(message.tabId);
+    return compare.start({ ...message, url: tab.url });
+  },
+  'cartscout:compare-cached': async ({ merchant, product }) => ({
+    saving: await findCachedSaving(compare.cached, merchant, product).catch(() => null),
+  }),
   'cartscout:compare-more': ({ tabId }) => compare.more({ tabId }),
   'cartscout:compare-clear': ({ tabId }) => compare.clear({ tabId }),
   'cartscout:compare-seen': ({ tabId }) => compare.seen({ tabId }),
@@ -182,13 +230,19 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  alertChecks.delete(tabId);
   void recovered.then(() => Promise.all([engine.tabRemoved(tabId), watcher.tabRemoved(tabId), compare.tabRemoved(tabId)]));
 });
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'loading' || changeInfo.url) alertChecks.delete(tabId);
   void recovered.then(async () => {
     const run = await engine.tabUpdated(tabId, changeInfo);
     if (run === 'forgotten' || (run === 'none' && changeInfo.status === 'loading')) await chrome.action.setBadgeText({ tabId, text: '' });
+    if (changeInfo.status === 'complete' || changeInfo.url) await checkPriceAlert(tab);
   }).catch(() => {});
+});
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  void recovered.then(() => chrome.tabs.get(tabId)).then(checkPriceAlert).catch(() => {});
 });
 
 // The badge wears the brand: ink with sticker-yellow numerals.

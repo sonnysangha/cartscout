@@ -442,6 +442,21 @@ body[data-dock="on"] #coupon-view { padding-block-end: calc(var(--dock-size) + 1
 .compare-form .primary { inline-size: 100%; min-block-size: 2.75rem; padding: 0; font-size: .84375rem; font-weight: 800; }
 .compare-form .primary[aria-disabled="true"] { cursor: progress; opacity: 1; }
 .compare-message { block-size: 1.375rem; padding-inline-start: .125rem; overflow: hidden; color: var(--muted); font-size: .75rem; line-height: 1.375rem; text-overflow: ellipsis; white-space: nowrap; }
+.cached-saving:not([hidden]) {
+  display: grid;
+  gap: .125rem;
+  inline-size: calc(100% - 2.5rem + var(--gutter));
+  margin: 0 calc(1.25rem - var(--gutter)) .625rem 1.25rem;
+  padding: .625rem .75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--paper);
+  color: var(--ink);
+  text-align: start;
+  cursor: pointer;
+}
+.cached-saving > span { color: var(--muted); font-size: .75rem; }
+.price-alert-settings { margin-block-start: .75rem; }
 .compare-message[data-tone="error"], .more-status[data-tone="error"], .welcome-status[data-tone="error"] { color: var(--red); font-weight: 700; }
 .verdict { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr) auto; align-items: center; column-gap: .75rem; min-block-size: 4.5rem; margin-block-start: .375rem; padding: .625rem .75rem; border-radius: var(--radius-m); background: var(--surface); }
 .verdict-scout { --scout-size: 3.5rem; }
