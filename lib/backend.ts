@@ -3,7 +3,9 @@ import { createClerkAuthenticator } from "@/server/auth.js";
 import { budgetMessage } from "@/server/budget.js";
 import { openConvexStore } from "@/server/convex-store.js";
 import { parseBasket, retryCost } from "@/server/alternatives.js";
+import { cachedAlternatives } from "@/server/cached-alternatives.js";
 import {
+  extractExternalHosts,
   normalizeCode,
   normalizeMerchant,
 } from "@/server/oxylabs.js";
@@ -196,6 +198,7 @@ export async function handleCouponsLookup(
   force: boolean,
   identity: { userId: string; plan: string },
   reporter: string,
+  progressToken?: string,
 ) {
   const merchant = normalizeMerchant(merchantInput);
   if (!merchant) {
@@ -245,12 +248,12 @@ export async function handleCouponsLookup(
     });
   }
 
-  const existingRecord = force ? null : await shopRecord(merchant);
+  const existingRecord = await shopRecord(merchant);
+  const inWindow =
+    !!existingRecord &&
+    time - existingRecord.fetchedAt < SCAN_LIFETIME.complete;
   const ready =
-    existingRecord?.result.complete &&
-    time - existingRecord.fetchedAt < SCAN_LIFETIME.complete
-      ? existingRecord
-      : null;
+    !force && inWindow && existingRecord.result.complete ? existingRecord : null;
 
   if (ready) {
     await store.save(cacheKey, ready.result, Date.now(), reservation, {
@@ -267,9 +270,27 @@ export async function handleCouponsLookup(
     throw failedRecently(mark, time);
   }
 
+  // Collect external websites already hit in the last 24h cache window so rescans expand to fresh sites.
+  const recentListed =
+    cached && time - cached.refreshed_at < SCAN_LIFETIME.complete
+      ? await store.listing(cacheKey, reporter, time)
+      : [];
+  const excludeHosts = extractExternalHosts(merchant, {
+    coupons: [...(inWindow ? existingRecord.result.coupons : []), ...recentListed],
+    hosts: inWindow ? existingRecord.visitedHosts ?? [] : [],
+  });
+
   // Delegate live Oxylabs coupon discovery directly to the `@convex-dev/action-cache` wrapped Convex Action.
+  let runningToken: string | undefined;
   try {
-    const discovered = await store.discoverShopAction(merchant, force);
+    if (progressToken) {
+      const started = await store.startCouponProgress(progressToken, reporter, merchant).catch(() => null);
+      if (started === false) {
+        throw new ApiHttpError(409, "CartScout is already checking this shop.", { code: "scan_in_progress" });
+      }
+      if (started) runningToken = progressToken;
+    }
+    const discovered = await store.discoverShopAction(merchant, force, excludeHosts, runningToken);
     if (!discovered.ok) {
       if (reservation) await store.releaseScan(reservation);
       const err = budgetReached("scan", discovered.refused);
@@ -295,11 +316,14 @@ export async function handleCouponsLookup(
       502,
       "Coupon search is temporarily unavailable. Try again shortly.",
     );
+  } finally {
+    if (runningToken) await store.finishCouponProgress(runningToken).catch(() => {});
   }
 }
 
 export async function handleAlternativesLookup(
   body: Record<string, unknown>,
+  cacheOnly = false,
 ) {
   const merchant = normalizeMerchant(body.merchant);
   if (!merchant) {
@@ -310,6 +334,7 @@ export async function handleAlternativesLookup(
     throw new ApiHttpError(400, "Choose a supported country and provide basket products.");
   }
   const store = getConvexStore();
+  if (cacheOnly) return cachedAlternatives(store, merchant, basket);
   const settled = await Promise.allSettled(
     basket.items.map(async (item: { name: string; variant: string }) => {
       const time = Date.now();

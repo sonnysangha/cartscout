@@ -9,6 +9,7 @@
  */
 
 import type * as cache from "../cache.js";
+import type * as couponProgress from "../couponProgress.js";
 import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as ledger from "../ledger.js";
@@ -24,6 +25,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   cache: typeof cache;
+  couponProgress: typeof couponProgress;
   crons: typeof crons;
   http: typeof http;
   ledger: typeof ledger;

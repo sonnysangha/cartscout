@@ -30,7 +30,7 @@ A friendly, honest alternative to coupon extensions that interrupt and overpromi
 
 - Coupon discovery and automatic coupon trying work on public HTTPS shops (26 built-in platform recipes, 10-language heuristic detection, and a shopper-picked box fallback). Whole-basket reading for Other retailers works on Myprotein UK today.
 - Free accounts get five live scans a week (resets Mondays 00:00 UTC) with a private cache. Pro accounts scan without a personal limit and share finds with other Pro accounts.
-- The extension asks for `activeTab` and `scripting` only. It never runs on a page until the shopper opens it there.
+- The extension uses temporary page access when the shopper opens it. Shoppers can also grant ongoing access to an individual shop for automatic alerts about fresh cached price comparisons.
 - Codes are public finds, not guarantees. A code can be listed and still be refused by a basket.
 - Sign-in, plans and billing are Clerk components hosted in the account portal.
 
@@ -39,7 +39,7 @@ A friendly, honest alternative to coupon extensions that interrupt and overpromi
 - **Scout does the legwork.** The mascot, a small yellow shopping cart called Scout, stands for the work the product does on the shopper's behalf.
 - **Honest about what it knows.** "Possible codes", never "guaranteed savings". A null result is stated as reassurance, not hidden.
 - **Celebrate real money only.** Confetti is for a saving confirmed against the basket total, or for unlocking Pro. Nothing else.
-- **Never in the way.** No pop-ups the shopper did not ask for, nothing covering the shop's own controls, every sequence can be stopped.
+- **Never in the way.** Automatic price notices are opt-in per shop and dismissible. Every checkout sequence can be stopped.
 
 ## Evidence on Hand
 

@@ -1,8 +1,11 @@
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
-import { createDiscovery, normalizeCode, normalizeMerchant, registrableDomain, SCAN_CEILING } from './oxylabs.js';
+import { cachedAlternatives } from './cached-alternatives.js';
+import {
+  createDiscovery, extractExternalHosts, mergeCoupons, normalizeCode, normalizeMerchant, registrableDomain, RESCAN_CEILING, SCAN_CEILING,
+} from './oxylabs.js';
 import { createAlternativeDiscovery, LOOKUP_CEILING, parseBasket, retryCost } from './alternatives.js';
-import { LOOKUP_LIFETIME, openStore, reporterKey, SCAN_LIFETIME } from './store.js';
+import { lastDayStillRunning, LOOKUP_LIFETIME, openStore, reporterKey, SCAN_LIFETIME } from './store.js';
 import { openConvexStore } from './convex-store.js';
 import { createClerkAuthenticator } from './auth.js';
 import { budgetMessage, createBudget } from './budget.js';
@@ -157,7 +160,9 @@ export function createCouponServer({
   }
 
   // Starts a live read of a shop and holds its worst case against the budget first, or says why it may not start.
-  async function startReading(merchant, time) {
+  // When `expand` carries recently hit hosts from the current cache window, the search excludes those sites and merges
+  // newly discovered codes with the still-valid cached codes so rescans keep broadening coverage.
+  async function startReading(merchant, time, expand = null) {
     // In replay a shop nobody saved takes the same path as a shop that could not be read.
     if (mode === 'replay') return { read: Promise.reject(new Error(`Nothing is saved to replay for ${merchant}`)) };
     const mark = await store.scanFailure(merchant);
@@ -167,16 +172,35 @@ export function createCouponServer({
     if (reading.size >= 5 || discoveryCount >= 15) {
       return { refused: new HttpError(429, 'Coupon search is busy. Try again shortly.') };
     }
-    const { ticket, refused } = await budget.reserve('scan', SCAN_CEILING, time);
+    const excludeHosts = expand?.excludeHosts ?? [];
+    const skipOwnPages = Boolean(expand?.skipOwnPages && excludeHosts.length > 0);
+    const { ticket, refused } = await budget.reserve('scan', skipOwnPages ? RESCAN_CEILING : SCAN_CEILING, time);
     if (refused) return { refused: budgetReached('scan', refused) };
+
+    const previousCoupons = expand?.previousCoupons ?? [];
+    const previousVisitedHosts = expand?.previousVisitedHosts ?? [];
 
     discoveryCount += 1;
     const read = (async () => {
       try {
-        const result = await discover(merchant, { ticket });
+        const visited = new Set();
+        const raw = await discover(merchant, {
+          ticket,
+          ...(excludeHosts.length > 0 && { excludeHosts, skipOwnPages }),
+          visited,
+        });
         const fetchedAt = now();
+        const today = lastDayStillRunning(fetchedAt);
+        const coupons = previousCoupons.length > 0
+          ? mergeCoupons(raw.coupons, previousCoupons, today)
+          : raw.coupons;
+        const result = { coupons, complete: raw.complete };
+        const mergedVisited = extractExternalHosts(merchant, {
+          coupons,
+          hosts: [...previousVisitedHosts, ...excludeHosts, ...visited],
+        });
         await store.clearScanFailure(merchant);
-        await store.saveShopScan(merchant, result, fetchedAt);
+        await store.saveShopScan(merchant, result, fetchedAt, false, mergedVisited);
         return { result, fetchedAt, seeded: false };
       } catch (error) {
         await store.markScanFailure(merchant, now());
@@ -254,7 +278,27 @@ export function createCouponServer({
       // someone else, or from a live read. A Free member's scan counts against their week in all three cases, and
       // their list and thumbs stay their own: only the public pages are shared.
       const ready = force ? null : await alreadyRead(merchant, time);
-      const started = ready ? null : reading.has(merchant) ? { read: reading.get(merchant) } : await startReading(merchant, time);
+      let expand = null;
+      if (!ready && !reading.has(merchant)) {
+        const previous = await shopRecord(merchant);
+        const inWindow = !!previous && time - previous.fetchedAt < SCAN_LIFETIME.complete;
+        const recentListed = cached && time - cached.refreshed_at < SCAN_LIFETIME.complete
+          ? await store.listing(cacheKey, reporter, time)
+          : [];
+        const excludeHosts = extractExternalHosts(merchant, {
+          coupons: [...(inWindow ? previous.result.coupons : []), ...recentListed],
+          hosts: inWindow ? (previous.visitedHosts ?? []) : [],
+        });
+        if (excludeHosts.length > 0) {
+          expand = {
+            excludeHosts,
+            skipOwnPages: Boolean(inWindow && previous.result.complete),
+            previousCoupons: inWindow ? previous.result.coupons : [],
+            previousVisitedHosts: inWindow ? (previous.visitedHosts ?? []) : [],
+          };
+        }
+      }
+      const started = ready ? null : reading.has(merchant) ? { read: reading.get(merchant) } : await startReading(merchant, time, expand);
       if (started?.refused) {
         // Nothing was read, so nothing is charged: a refused scan leaves the member's weekly scans alone.
         if (reservation) await store.releaseScan(reservation);
@@ -408,7 +452,7 @@ export function createCouponServer({
       if (request.url === '/health' && request.method === 'GET') return send(200, { ok: true });
       const wantsAccount = request.method === 'GET' && request.url === '/v1/account';
       const wantsWins = request.method === 'GET' && request.url === '/v1/wins';
-      if (!wantsAccount && !wantsWins && (request.method !== 'POST' || !['/v1/coupons', '/v1/reports', '/v1/alternatives'].includes(request.url))) {
+      if (!wantsAccount && !wantsWins && (request.method !== 'POST' || !['/v1/coupons', '/v1/reports', '/v1/alternatives', '/v1/alternatives/cached'].includes(request.url))) {
         throw new HttpError(404, 'Route not found.');
       }
 
@@ -431,9 +475,10 @@ export function createCouponServer({
       const merchant = normalizeMerchant(body.merchant);
       if (!merchant) throw new HttpError(400, 'Scout can only look up public shop websites.');
       const cacheKey = identity?.plan === 'free' ? `private:${reporter}:${merchant}` : merchant;
-      if (request.url === '/v1/alternatives') {
+      if (request.url === '/v1/alternatives' || request.url === '/v1/alternatives/cached') {
         const basket = parseBasket(body);
         if (!basket) throw new HttpError(400, 'Choose a supported country and provide basket products.');
+        if (request.url.endsWith('/cached')) return send(200, await cachedAlternatives(store, merchant, basket, now()));
         return send(200, await alternatives(merchant, reporter, basket.country, basket.items));
       }
       if (request.url === '/v1/coupons') {

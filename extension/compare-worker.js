@@ -66,8 +66,9 @@ export function createCompareEngine({
     await storage.remove(compareKey(tabId)).catch(noop);
   }
 
-  async function callAlternatives(merchant, country, items) {
-    const request = async (bearer) => fetch(new URL('/v1/alternatives', apiOrigin), {
+  async function callAlternatives(merchant, country, items, cacheOnly = false) {
+    const path = cacheOnly ? '/v1/alternatives/cached' : '/v1/alternatives';
+    const request = async (bearer) => fetch(new URL(path, apiOrigin), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` },
       body: JSON.stringify({
@@ -75,7 +76,7 @@ export function createCompareEngine({
         country,
         items: items.map(({ name, variant }) => ({ name, variant })),
       }),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(cacheOnly ? 8_000 : FETCH_TIMEOUT_MS),
     });
 
     let bearer = await token(false);
@@ -111,6 +112,7 @@ export function createCompareEngine({
     try {
       const tab = await tabs.get(state.tabId);
       if (!tab?.url || bare(new URL(tab.url).hostname) !== bare(state.host)) return;
+      if (state.url && state.url !== tab.url) return;
       if (states.get(state.tabId)?.startedAt !== state.startedAt || states.get(state.tabId)?.seen) return;
       await scripting.executeScript({ target: { tabId: state.tabId }, files: [PANEL_FILE] });
       const offersCount = state.found.reduce((sum, item) => sum + (item.offers?.length ?? 0), 0);
@@ -190,7 +192,7 @@ export function createCompareEngine({
     }
   }
 
-  async function start({ tabId, host, merchant, country, basket = false, query = '', items } = {}) {
+  async function start({ tabId, host, merchant, country, basket = false, query = '', items, url } = {}) {
     if (!Number.isInteger(tabId)) return { error: 'CartScout couldn’t find that tab.' };
     if (typeof merchant !== 'string' || !merchant) return { error: 'Open a shop first, then compare prices.' };
     if (typeof country !== 'string' || !/^[A-Z]{2}$/.test(country)) return { error: 'Choose a country first.' };
@@ -204,6 +206,7 @@ export function createCompareEngine({
       tabId,
       host: typeof host === 'string' && host ? host : merchant,
       merchant,
+      ...(url && { url }),
       country,
       basket: basket === true,
       query: typeof query === 'string' ? query.slice(0, 140) : '',
@@ -277,6 +280,7 @@ export function createCompareEngine({
 
   return {
     start,
+    cached: (merchant, country, item) => callAlternatives(merchant, country, [item], true),
     more,
     seen,
     clear,

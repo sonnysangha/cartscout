@@ -72,6 +72,17 @@ function harness({
   return { engine, stored, injected, notices, requests, settled };
 }
 
+test('the automatic comparison uses only the cache endpoint and leaves a manual run untouched', async () => {
+  const { engine, stored, injected, notices, requests } = harness();
+  const [result] = await engine.cached('johnlewis.com', 'GB', { name: 'Garmin Forerunner 265 46mm', variant: 'Black' });
+  assert.equal(result.offers.length, 1);
+  assert.deepEqual(requests, [{
+    url: 'http://localhost:8787/v1/alternatives/cached',
+    body: { merchant: 'johnlewis.com', country: 'GB', items: [{ name: 'Garmin Forerunner 265 46mm', variant: 'Black' }] },
+  }]);
+  assert.deepEqual([stored, injected, notices], [{}, [], []]);
+});
+
 test('async compare runs in the background, persists to storage.session, and notifies the page when popup is closed', async () => {
   const { engine, stored, injected, notices, requests, settled } = harness({ popupOpen: false });
   const started = await engine.start({

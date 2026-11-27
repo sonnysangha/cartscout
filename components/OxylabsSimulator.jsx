@@ -186,7 +186,7 @@ const NODES = [
   { id: 'store', step: 1, x: 14, y: 162, w: 146, h: 112, badge: 'CHROME MV3', title: 'Store & Popup', sub: 'Clicks "Scan shop"' },
   { id: 'cache', step: 2, x: 186, y: 162, w: 156, h: 112, badge: 'CONVEX DB', title: '24h Cache & Ledger', sub: 'Domain check + hold' },
   { id: 'search', step: 3, x: 374, y: 76, w: 150, h: 110, badge: '⚡ OXYLABS · 1 REQ', title: 'POST /v1/search', sub: 'Geo Google Search' },
-  { id: 'rank', step: 4, x: 374, y: 228, w: 150, h: 108, badge: 'LOCAL FILTER', title: 'Filter & Rank', sub: 'Drops click walls' },
+  { id: 'rank', step: 4, x: 374, y: 228, w: 150, h: 108, badge: 'LOCAL FILTER', title: 'Filter & Rank', sub: 'Prefers visible codes' },
   { id: 'scrape-0', step: 5, scrapeIdx: 0, x: 562, y: 34, w: 152, h: 72, badge: '⚡ OXYLABS · #1', title: 'POST /v1/scrape', sub: 'Official store' },
   { id: 'scrape-1', step: 5, scrapeIdx: 1, x: 562, y: 120, w: 152, h: 72, badge: '⚡ OXYLABS · #2', title: 'POST /v1/scrape', sub: 'Coupon site #1' },
   { id: 'scrape-2', step: 5, scrapeIdx: 2, x: 562, y: 206, w: 152, h: 72, badge: '⚡ OXYLABS · #3', title: 'POST /v1/scrape', sub: 'Coupon site #2' },
@@ -314,7 +314,7 @@ export function OxylabsSimulator() {
     return {
       oxylabsCalls: calls,
       latency: `${ms} ms`,
-      cacheState: step < 2 ? 'Idle' : step < 7 ? 'MISS → Held 6 slots' : 'SAVED (24h TTL)',
+      cacheState: step < 2 ? 'Idle' : step < 7 ? 'MISS → Held up to 27 slots' : 'SAVED (24h TTL)',
       verifiedCount: step >= 6 ? scenario.verified.filter((v) => v.kept).length : 0,
       droppedCount: step >= 6 ? scenario.verified.filter((v) => !v.kept).length : 0,
     };
@@ -396,15 +396,15 @@ export function OxylabsSimulator() {
           usesOxylabs: false,
           oxylabsTag: '0 Oxylabs calls yet · Budget Guardrail in Convex',
           who: 'Convex Database + UTC Ledger',
-          inOut: 'Cache MISS → Atomic 6-request ticket reserved',
+          inOut: 'Cache miss → Up to 27 requests reserved',
           eyebrow: 'Step 2 · Cache Miss → Reserve a Safe Oxylabs Budget Ticket',
-          headline: `No fresh scan for ${scenario.domain} — reserve up to 6 Oxylabs calls before starting`,
-          story: `Convex checked shop_scans and didn’t find a scan from the last 24 hours. Before calling Oxylabs, Convex locks an atomic "ticket" for at most 6 requests (1 search + up to 5 page scrapes) against your daily & monthly limits so a bug or traffic spike can never blow your budget.`,
+          headline: `No fresh scan for ${scenario.domain} — reserve up to 27 Oxylabs calls before starting`,
+          story: `Convex checked shop_scans and didn’t find a scan from the last 24 hours. Before calling Oxylabs, Convex locks an atomic "ticket" for at most 27 requests (up to 4 searches, 20 external sites, 2 merchant pages and 1 render retry) against your daily & monthly limits so a bug or traffic spike can never blow your budget.`,
           simpleLeftTitle: 'Why reserve a ticket first?',
           simpleLeftCards: [
             { label: 'Cache status', value: `MISS for ${scenario.domain}`, note: 'No complete scan stored in the last 24h' },
-            { label: 'Hard ceiling per store', value: 'Max 6 Oxylabs requests', note: '1 Google search + up to 5 page scrapes' },
-            { label: 'Unused slots returned', value: 'Automatic release', note: 'If a store only needs 4 scrapes, the extra slot is immediately refunded' },
+            { label: 'Hard ceiling per store', value: 'Max 27 Oxylabs requests', note: 'Up to 4 searches, 20 publishers and 3 merchant reads' },
+            { label: 'Unused slots returned', value: 'Automatic release', note: 'The ledger releases unused slots when the scan finishes' },
           ],
           simpleRightTitle: 'What Convex guarantees',
           rightKind: 'bullets',
@@ -417,14 +417,14 @@ export function OxylabsSimulator() {
           rawLeftCode: JSON.stringify({
             mutation: 'ledger:reserve',
             operation: 'coupon_scan',
-            reservedSlots: 6,
+            reservedSlots: 27,
             enforces: ['OXYLABS_DAILY_REQUESTS', 'OXYLABS_MONTHLY_REQUESTS'],
           }, null, 2),
           rawRightTitle: 'Ticket Granted',
           rawRightCode: JSON.stringify({
             ok: true,
             holdId: 'hold_9f4c2a1e',
-            maxRequests: 6,
+            maxRequests: 27,
             runtime: 'Convex Action (convex/oxylabs.ts)',
           }, null, 2),
         };
@@ -435,10 +435,10 @@ export function OxylabsSimulator() {
         usesOxylabs: true,
         oxylabsTag: '⚡ OXYLABS WEB API ACTIVE · 1 request (POST /v1/search)',
         who: 'Oxylabs Web API — /v1/search',
-        inOut: `Google search query (${scenario.location}) → Top 10 real URLs`,
+        inOut: `Google search query (${scenario.location}) → Up to 20 URLs`,
         eyebrow: 'Step 3 · Oxylabs Call #1 — Find Where the Codes Live (POST /v1/search)',
         headline: `Oxylabs runs a real ${scenario.location} Google Search for ${scenario.merchant} promo codes`,
-        story: `THIS is the first time we call Oxylabs! Instead of guessing URLs or maintaining a brittle Google scraper, we send 1 request to Oxylabs /v1/search with the store name and country (${scenario.location}). Oxylabs handles proxies & anti-bot checks and returns clean organic search results.`,
+        story: `THIS is the first time we call Oxylabs! Instead of guessing URLs or maintaining a brittle Google scraper, we send 1 request to Oxylabs /v1/search with the store name and country (${scenario.location}). If the first response leaves fewer than 20 eligible publishers, CartScout runs three follow-up queries to look for other sources.`,
         simpleLeftTitle: 'What we ask Oxylabs /v1/search',
         simpleLeftCards: [
           { label: 'Endpoint', value: 'POST webapi.oxylabs.io/v1/search', note: 'Authenticated with Bearer OXYLABS_WEB_API_KEY' },
@@ -452,7 +452,7 @@ export function OxylabsSimulator() {
         rawLeftCode: JSON.stringify({
           query: scenario.searchQuery,
           location: scenario.location,
-          max_results: 10,
+          max_results: 20,
         }, null, 2),
         rawRightTitle: 'Parsed Organic Search Results',
         rawRightCode: JSON.stringify(
@@ -511,10 +511,10 @@ export function OxylabsSimulator() {
         headline: focused
           ? `Oxylabs scrapes ${focused.host} and extracts ${focused.found.join(', ')} in ${focused.ms}ms`
           : `Oxylabs scrapes ${scenario.scrapeTargets.length} pages AT THE SAME TIME with Markdown + AI Prompt`,
-        story: `THIS is the second place we call Oxylabs — and it does NOT wait 1-by-1! CartScout uses Promise.allSettled() to fire official store scrapes in parallel (with a conditional run_js: true fallback if an SPA comes back blank), then scrapes the top coupon sites in parallel. Every call asks Oxylabs for BOTH raw Markdown AND structured AI JSON.`,
+        story: `THIS is the second place we call Oxylabs — and it does NOT wait 1-by-1! This example shows four scrapes. CartScout can check up to 20 eligible coupon publishers alongside merchant pages. Each completed page sends validated codes and progress to the extension as soon as they’re available. CartScout saves the final retailer result after the remaining pages settle.`,
         simpleLeftTitle: 'The exact AI Prompt sent to Oxylabs /v1/scrape',
         simpleLeftCards: [
-          { label: 'Why parallel?', value: 'Promise.allSettled() — all at once', note: '4 scrapes take ~0.9s total instead of ~3.5s sequentially' },
+          { label: 'Why parallel?', value: 'Promise.allSettled() — all at once', note: 'Faster pages can show codes while slower pages are still running' },
           { label: 'Dual output requested', value: 'output: ["markdown", "json"]', note: 'Oxylabs AI parses structured coupons AND returns raw Markdown proof' },
           { label: 'AI Prompt rules', value: `Only ${scenario.merchant} · Ignore "Show Code" & expired`, note: focused ? `Extracted from ${focused.host}: ${focused.snippet}` : 'Treats page HTML as untrusted data to block prompt injection' },
         ],
@@ -781,7 +781,7 @@ export function OxylabsSimulator() {
                     <strong>{scenario.merchant}</strong>
                     <span>
                       {step === 1 && 'Ready to scan'}
-                      {step === 2 && (cacheMode === 'hit' ? 'Instant 24h cache hit · 0 Oxylabs reqs' : 'Checking cache · Reserving 6-slot ticket…')}
+                      {step === 2 && (cacheMode === 'hit' ? 'Instant 24h cache hit · 0 Oxylabs reqs' : 'Checking cache · Reserving a request budget…')}
                       {step === 3 && '⚡ Calling Oxylabs /v1/search…'}
                       {step === 4 && 'Ranking official & open coupon sites…'}
                       {step === 5 && `⚡ Calling Oxylabs /v1/scrape (×${scenario.scrapeTargets.length} parallel)…`}
@@ -968,7 +968,7 @@ export function OxylabsSimulator() {
             <div className="sim-metric">
               <span className="sim-metric-label">Oxylabs calls</span>
               <strong className="sim-metric-val" data-tone={metrics.oxylabsCalls === 0 && cacheMode === 'hit' ? 'green' : metrics.oxylabsCalls > 0 ? 'sun' : undefined}>
-                {metrics.oxylabsCalls} / 6
+                {metrics.oxylabsCalls} / 27
               </strong>
             </div>
             <div className="sim-metric">

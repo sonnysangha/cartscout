@@ -14,6 +14,9 @@ function timingSafeEqual(a: string, b: string): boolean {
 }
 
 const ROUTES = {
+  "couponProgress:start": { kind: "mutation" as const, ref: internal.couponProgress.start },
+  "couponProgress:active": { kind: "query" as const, ref: internal.couponProgress.active },
+  "couponProgress:finish": { kind: "mutation" as const, ref: internal.couponProgress.finish },
   "store:getSearch": { kind: "query" as const, ref: internal.store.getSearch },
   "store:listing": { kind: "query" as const, ref: internal.store.listing },
   "store:shopScan": { kind: "query" as const, ref: internal.store.shopScan },

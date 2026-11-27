@@ -6,7 +6,7 @@
 import { PANEL_FILE } from './run.js';
 
 export const WATCH_EVERY_MS = 3000;
-export const WATCH_LIMIT_MS = 100_000;
+export const WATCH_LIMIT_MS = 120_000;
 // Chrome ends a service worker whose fetch goes unanswered for 30 seconds; no lookup is ever held that long.
 const LOOKUP_TIMEOUT_MS = 10_000;
 
@@ -95,7 +95,7 @@ export function createScanWatcher({
     return { ok: true };
   }
 
-  /** Pick watches back up after the service worker restarts; each keeps its original 100 second limit. */
+  /** Pick watches back up after the service worker restarts without restarting the timer. */
   async function recover() {
     const stored = await storage.get(null).catch(() => ({}));
     for (const [key, saved] of Object.entries(stored ?? {})) {

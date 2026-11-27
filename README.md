@@ -102,8 +102,8 @@ flowchart TD
 
   CheckCache -->|"YES — Cache Hit (< 50ms)"| Fast["Return cached codes + community thumbs\n(0 Oxylabs requests spent)"]
 
-  CheckCache -->|"NO — Cache Miss / Expired / Rescan"| Reserve["Reserve atomic ticket in Convex UTC Ledger\n(max 6 requests, enforces daily & monthly cap)"]
-  Reserve --> RunOxy["Convex Action calls Oxylabs Web API\n• 1 × /v1/search (find official + coupon pages)\n• up to 5 × /v1/scrape in parallel (Markdown + AI JSON)"]
+  CheckCache -->|"NO — Cache Miss / Expired / Rescan"| Reserve["Reserve atomic ticket in Convex UTC Ledger\n(max 27 requests, enforces daily & monthly cap)"]
+  Reserve --> RunOxy["Convex Action calls Oxylabs Web API\n• up to 4 × /v1/search (20 results each)\n• up to 20 external pages plus merchant reads (Markdown + AI JSON)"]
   RunOxy --> Save["@convex-dev/action-cache stores result (24h TTL)\n+ releases unused ledger slots"]
   Save --> Fast
 ```
@@ -117,16 +117,18 @@ Every outbound call to Oxylabs is ticket-gated and logged:
 - **Hard ticket enforcement:** Every request must present an atomically reserved hold (`convex/ledger.ts`). If an operation tries to exceed its reserved ceiling, it throws locally before sending any HTTP request. Every call logs its kind (`search`, `read`, or `read_js`), target hostname, AI parser flag, HTTP success, and latency straight into the Convex UTC ledger.
 - **Raw response recording:** When `OXYLABS_RECORD=1` is enabled locally, `createRecorder` ([`server/recorder.js`](server/recorder.js)) saves raw Oxylabs payloads to disk for offline fixture replay.
 
-### 2. Multi-Stage Coupon Discovery Pipeline (`SCAN_CEILING = 6`)
+### 2. Multi-Stage Coupon Discovery Pipeline
 
-When a member scans a shop (`POST /v1/coupons`), the Convex Action runs a strictly bounded **3-stage Oxylabs pipeline** capped at **`6` requests max** per shop:
+When a member scans a shop (`POST /v1/coupons`), the Convex Action reserves up to 27 requests. A follow-up that skips previously checked merchant pages reserves up to 24.
 
-1. **Stage 1 — Geo-Targeted Search (`POST /v1/search`, 1 request):**
-   - Queries Oxylabs Google Search with `"<merchant> coupon codes promo codes discount checkout"` (`max_results: 10`, geo-located via `OXYLABS_LOCATION`).
-   - Splits candidate URLs into **Official merchant pages** (`OWN_PAGES = 2`, homepage + known voucher pages like Myprotein’s `/c/voucher-codes/`) and **Open third-party coupon publishers** (`COUPON_SITES = 3`, 1 URL per host).
+The shared coupon cache is keyed by merchant domain, so product pages on the same storefront reuse the same scan. Independently hosted shops on multi-tenant platforms keep separate cache entries. Each coupon retains its own offer terms and expiry. While a live scan runs, the extension keeps saved codes visible and adds verified source results as pages finish. Convex publishes scan progress separately, and the retailer cache receives the final result.
+
+1. **Stage 1 — Geo-Targeted Search (`POST /v1/search`, up to 4 requests):**
+   - Queries Oxylabs for up to 20 results at a time, geo-located via `OXYLABS_LOCATION`. If the first query yields fewer than 20 eligible publishers, three different queries run in parallel to fill the remaining slots.
+   - Selects up to two official merchant pages and one candidate URL per external host. Follow-up searches filter out hosts recorded in the current cache window.
    - **Smart publisher ranking (`siteRank`):** Ranks open-code sites that print full unmasked codes in plain HTML (`couponsolver`, `wethrift`, `simplycodes`, `couponbirds`, `coupert`, `dontpayfull`, `worthepenny`, `knoji`, `retailmenot`, `reddit`, `moneysavingexpert`) ahead of click-to-reveal affiliate walls (`wowcher`, `savoo`, `vouchercodes`, `couponfollow`, etc.).
 2. **Stage 2 — Parallel Scraping with Oxylabs AI Structured Extraction (`POST /v1/scrape`):**
-   - Scrapes official store pages in parallel via `Promise.allSettled()`, then scrapes top-ranked open coupon sites in parallel up to `SCAN_CEILING = 6`.
+   - Scrapes official store pages and then up to 20 ranked external coupon pages, with parallel reads within each group.
    - Requests `output: ['markdown', 'json']` with a strict `json.prompt` extracting `{ coupons: [{ code, offer, expiresOn }] }` only for the target `merchant`, ignoring masked `"Get Code / Show Code"` buttons and prompt-injection text.
    - **Double verification against raw Markdown (`hasPublicCode`, `namedBeside`):** CartScout never blindly trusts an LLM. Every AI-extracted code must appear literally in the raw Markdown next to an explicit label (`Use code:`, `Enter SAVE20 at checkout`, Markdown code cells, etc.), and expired dates are stripped with a global-friendly timezone cutoff.
 3. **Stage 3 — Conditional JavaScript Rendering Fallback (`run_js: true`):**
@@ -158,6 +160,7 @@ Open **`http://localhost:8788/?intent=demo`** (or click **Oxylabs Simulator** in
 - **Coupon discovery & smart working-first ordering:** Reads codes advertised directly on the page instantly without spending a scan, displays discovered codes as perforated tickets with community 👍 / 👎 tallies, and automatically promotes codes that **worked on your basket** (best saving #1) to the very top.
 - **Universal checkout auto-try engine (`extension/autotry/`):** On any HTTPS shop’s basket or checkout page, Scout tries up to 10 codes sequentially in a Shadow DOM floating dock, supports major e-commerce platforms + a 10-language heuristic promo-box finder + a **“Show Scout the code box”** visual picker, restores the biggest saving, and automatically files 👍 / 👎 reports to Convex.
 - **Other retailers & cross-border price checks:** Reads product details and prices from product pages or baskets (`extension/basket.js`), lets you switch countries under **Shop in** (`UK`, `US`, `DE`, `FR`, `AU`, `CA`, etc.), and highlights local & cross-border savings.
+- **Cached price alerts:** Open CartScout on a product page to see fresh savings from shared comparisons. In **Other retailers**, choose **Enable price alerts on this shop** to also see a dismissible notice when visiting that shop. Alerts compare the current page price with an in-stock exact match in the same currency, before delivery. Automatic checks only read the cache.
 - **Unified Next.js 16 Portal & Real-Time Member Wins Feed:** Powered by [Clerk](https://go.clerk.com/sonny) + [Convex](https://convex.dev/referral/SONNYS4371) (`ConvexProviderWithClerk`), featuring Pro/Free plan management, a live Pro-only **Recent coupons used by members** ticket feed (server-gated — Free users see blurred synthetic placeholders with zero leaked codes), and cross-border comparison slips.
 
 | Plan | Coupon discovery | Cache & Community Feed |

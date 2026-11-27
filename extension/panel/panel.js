@@ -219,8 +219,12 @@ export function createPanel({ send = () => {} } = {}) {
   // Scan notice view
   const noticeScout = mountScout(el('span'), { mood: 'happy' });
   const noticeTitle = el('h2', 'notice-title');
+  const noticeDetail = el('p', 'notice-detail');
+  noticeDetail.hidden = true;
+  const noticeCopy = el('div', 'notice-copy');
+  noticeCopy.append(noticeTitle, noticeDetail);
   const noticeLead = el('div', 'notice-lead');
-  noticeLead.append(noticeScout, noticeTitle);
+  noticeLead.append(noticeScout, noticeCopy);
   const showCodes = el('button', 'primary', 'Show codes');
   showCodes.type = 'button';
   const noticeHint = el('p', 'notice-hint', 'Click the CartScout icon to see them.');
@@ -245,6 +249,7 @@ export function createPanel({ send = () => {} } = {}) {
   const fresh = () => ({ startedAt: null, view: '', code: '', pips: 0, status: '', pickPhase: '' });
   let current = null;
   let notice = null;
+  let lastPriceAlert = '';
   let shown = fresh();
   let closing;
   let syncing;
@@ -630,9 +635,12 @@ export function createPanel({ send = () => {} } = {}) {
   function showNotice(next) {
     if (current || swapping || !next || !Number.isInteger(next.count) || next.count < 0 || typeof next.host !== 'string') return;
     if (location.hostname && bareHost(location.hostname) !== bareHost(next.host)) return;
-    const isCompare = next.kind === 'compare';
+    const priceAlert = next.kind === 'price-alert';
+    if (priceAlert && (notice || next.key === lastPriceAlert)) return;
+    if (priceAlert) lastPriceAlert = next.key;
+    const isCompare = next.kind === 'compare' || priceAlert;
     const found = next.count > 0;
-    const text = isCompare
+    const text = priceAlert ? next.title : isCompare
       ? (next.cheaper > 0 ? 'Found a lower price at another retailer' : found ? 'Other retailer prices are ready' : 'No other retailer prices found.')
       : (found ? `Scout found ${countOf(next.count)} for ${bareHost(next.host)}` : `No codes for ${bareHost(next.host)} this time.`);
     notice = { ...next, text };
@@ -643,21 +651,23 @@ export function createPanel({ send = () => {} } = {}) {
     showCodes.textContent = isCompare ? 'Show prices' : 'Show codes';
     showCodes.inert = !found && !isCompare;
     noticeTitle.textContent = text;
+    noticeDetail.hidden = !priceAlert;
+    noticeDetail.textContent = priceAlert ? next.detail : '';
     close.setAttribute('aria-label', 'Close CartScout');
     setMood(noticeScout, found ? 'happy' : 'shrug');
     showView('notice');
     const attached = open();
     setTimeout(() => {
       if (!notice) return;
-      say(found ? `${text}.` : text);
-      if (found && attached) void sparkle({ host: confetti, origin: noticeScout });
+      say(priceAlert ? `${text}. ${next.detail}.` : found ? `${text}.` : text);
+      if (found && attached && !priceAlert) void sparkle({ host: confetti, origin: noticeScout });
     }, attached ? 420 : 0);
     restNotice();
   }
 
   function openCodes() {
     if (!notice) return;
-    const payload = notice.kind === 'compare' ? { view: 'alternatives' } : undefined;
+    const payload = ['compare', 'price-alert'].includes(notice.kind) ? { view: 'alternatives' } : undefined;
     ask('cartscout:open-popup', payload).then((reply) => reply?.ok === true, () => false).then((opened) => {
       if (!notice) return;
       if (opened) {
